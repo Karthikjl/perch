@@ -50,7 +50,7 @@ const SectionInfo kSections[SEC_COUNT] = {
     {L"Pages", L"\xE8FD", 0x33ADE5, false},      {L"Appearance", L"\xE793", 0x424247, false},
     {L"Music and lyrics", L"\xEC4F", 0xFF385E, true}, {L"Widgets", L"\xF0E2", 0x0A85FF, true},
     {L"Ask Perch", L"\xE8BD", 0x6B54FF, true},   {L"To-do", L"\xE73E", 0x30C759, false},
-    {L"Pomodoro", L"\xE916", 0x7D66FA, false},   {L"Water", L"\xEB42", 0x0A85FF, true},
+    {L"Pomodoro", L"\xE916", 0x7D66FA, false},   {L"Water", L"\xEB42", 0x0A85FF, false},
     {L"Shelf", L"\xE7B8", 0xFFB233, false},      {L"HUD & popups", L"\xEA8F", 0x30ABDB, false},
     {L"About", L"\xE946", 0x636369, false}};
 
@@ -67,6 +67,7 @@ enum Id {
     H_VOLUME, H_BRIGHT, H_CAPS, H_LANG, H_BATTERY, H_WIFI, H_BT,
     B_FILE, B_RESET,
     G_PETSTYLE, // arg = mascot style
+    W_REMIND, W_GOAL, W_CUP, W_FROM, W_UNTIL,
     I_SOON, // a Coming soon control (never hit)
 };
 
@@ -153,6 +154,7 @@ bool GetBool(int id) {
     case H_BATTERY: return g_s.popBattery;
     case H_WIFI: return g_s.popWifi;
     case H_BT: return g_s.popBluetooth;
+    case W_REMIND: return g_s.waterRemind;
     }
     return false;
 }
@@ -176,6 +178,7 @@ void FlipBool(int id) {
     case H_BATTERY: g_s.popBattery = !g_s.popBattery; break;
     case H_WIFI: g_s.popWifi = !g_s.popWifi; break;
     case H_BT: g_s.popBluetooth = !g_s.popBluetooth; break;
+    case W_REMIND: g_s.waterRemind = !g_s.waterRemind; break;
     default: return;
     }
     g_host.commit(g_s);
@@ -188,7 +191,8 @@ int GetChoice(int id) {
     case T_SNOOZE: return g_s.snooze == 5 ? 0 : g_s.snooze == 15 ? 2 : 1;
     case T_WEEK: return g_s.weekMonday ? 1 : 0;
     case T_VIEW: return g_s.calWeek ? 1 : 0;
-    case D_RING: return g_s.ring == RING_BATTERY ? 0 : g_s.ring == RING_TASKS ? 2 : 3;
+    case D_RING: return g_s.ring == RING_BATTERY ? 0 : g_s.ring == RING_WATER ? 1 : g_s.ring == RING_TASKS ? 2 : 3;
+    case W_GOAL: return (g_s.waterGoal - 1500) / 500;
     case A_STYLE: return g_s.style;
     case G_PETSTYLE: return g_s.mascotStyle;
     }
@@ -203,7 +207,8 @@ void SetChoice(int id, int v) {
     case T_SNOOZE: g_s.snooze = v == 0 ? 5 : v == 2 ? 15 : 10; break;
     case T_WEEK: g_s.weekMonday = v == 1; break;
     case T_VIEW: g_s.calWeek = v == 1; break;
-    case D_RING: g_s.ring = v == 0 ? RING_BATTERY : v == 2 ? RING_TASKS : RING_NONE; break;
+    case D_RING: g_s.ring = v == 0 ? RING_BATTERY : v == 1 ? RING_WATER : v == 2 ? RING_TASKS : RING_NONE; break;
+    case W_GOAL: g_s.waterGoal = 1500 + 500 * v; break;
     case A_STYLE: g_s.style = v; break;
     default: return;
     }
@@ -216,6 +221,9 @@ void Step(int id, int dir) {
     case O_FOCUS: g_s.pomoFocus = clamp(g_s.pomoFocus + 5 * dir, 5, 120); break;
     case O_SHORT: g_s.pomoShort = clamp(g_s.pomoShort + dir, 1, 60); break;
     case O_LONG: g_s.pomoLong = clamp(g_s.pomoLong + 5 * dir, 5, 60); break;
+    case W_CUP: g_s.waterCup = clamp(g_s.waterCup + 50 * dir, 100, 1000); break;
+    case W_FROM: g_s.waterFrom = clamp(g_s.waterFrom + 30 * dir, 0, g_s.waterUntil - 60); break;
+    case W_UNTIL: g_s.waterUntil = clamp(g_s.waterUntil + 30 * dir, g_s.waterFrom + 60, 23 * 60 + 30); break;
     default: return;
     }
     g_host.commit(g_s);
@@ -227,6 +235,9 @@ std::wstring StepText(int id) {
     case O_FOCUS: swprintf(b, 32, L"%d min", g_s.pomoFocus); break;
     case O_SHORT: swprintf(b, 32, L"%d min", g_s.pomoShort); break;
     case O_LONG: swprintf(b, 32, L"%d min", g_s.pomoLong); break;
+    case W_CUP: swprintf(b, 32, L"%d ml", g_s.waterCup); break;
+    case W_FROM: swprintf(b, 32, L"%02d:%02d", g_s.waterFrom / 60, g_s.waterFrom % 60); break;
+    case W_UNTIL: swprintf(b, 32, L"%02d:%02d", g_s.waterUntil / 60, g_s.waterUntil % 60); break;
     }
     return b;
 }
@@ -507,11 +518,11 @@ void BuildDisplay() {
     float top = g_y, h = 168;
     Fill(D2D1::RectF(kCardL, top, kCardR, top + h), 8, Hex(cCard));
     const wchar_t* t[4] = {L"Battery", L"Water", L"To-do", L"Off"};
-    const wchar_t* sub[4] = {L"Charge left", L"Glasses today", L"Tasks finished", L"No ring"};
+    const wchar_t* sub[4] = {L"Charge left", L"Water today", L"Tasks finished", L"No ring"};
     float cw = (kCardR - kCardL - 16 - 3 * 8) / 4;
     for (int i = 0; i < 4; i++) {
         D2D1_RECT_F r = D2D1::RectF(kCardL + 8 + i * (cw + 8), top + 8, kCardL + 8 + i * (cw + 8) + cw, top + h - 8);
-        ChoiceCard(r, D_RING, i, GetChoice(D_RING) == i, i == 1, t[i], sub[i], i == 3 ? -1 : i == 1 ? 1 : 0, -1);
+        ChoiceCard(r, D_RING, i, GetChoice(D_RING) == i, false, t[i], sub[i], i == 3 ? -1 : i == 1 ? 1 : 0, -1);
     }
     g_y = top + h;
     Label(L"Notch screen");
@@ -645,16 +656,18 @@ void BuildPomodoro() {
           {RK_STEP, L"Long break", nullptr, O_LONG, false, {}, {}}});
 }
 void BuildWater() {
-    Header(L"Water", true);
+    Header(L"Water", false);
     Label(L"Reminders");
-    Card({{RK_TOGGLE, L"Water reminders", L"Reminders through the day", I_SOON, true, {}, {}}});
+    Card({{RK_TOGGLE, L"Water reminders", L"A nudge when you're behind, until you reach your goal", W_REMIND, false, {}, {}}});
     Label(L"Plan");
-    Card({{RK_SEG, L"Daily goal", nullptr, I_SOON, true, {L"1.5 L", L"2 L", L"2.5 L", L"3 L"}, {}},
-          {RK_STEP, L"Bottle size", nullptr, I_SOON, true, {L"500 ml"}, {}},
-          {RK_STEP, L"Active from", nullptr, I_SOON, true, {L"08:00"}, {}},
-          {RK_STEP, L"Active until", nullptr, I_SOON, true, {L"17:00"}, {}}});
+    Card({{RK_SEG, L"Daily goal", nullptr, W_GOAL, false, {L"1.5 L", L"2 L", L"2.5 L", L"3 L"}, {}},
+          {RK_STEP, L"Cup size", L"What one tap of + adds", W_CUP, false, {}, {}},
+          {RK_STEP, L"Active from", nullptr, W_FROM, false, {}, {}},
+          {RK_STEP, L"Active until", nullptr, W_UNTIL, false, {}, {}}});
     Label(L"Today");
-    Card({{RK_TEXT, L"Today's progress", nullptr, I_SOON, true, {}, {}}});
+    wchar_t today[64] = L"";
+    if (g_host.waterStatus) g_host.waterStatus(today, 64);
+    Card({{RK_TEXT, L"Today's progress", nullptr, I_NONE, false, {today}, {}}});
 }
 void BuildShelf() {
     Header(L"Shelf", false);
@@ -846,8 +859,8 @@ void Activate(const Hit& h) {
     case P_UP: MovePage(h.arg, -1); break;
     case P_DOWN: MovePage(h.arg, 1); break;
     case P_TOGGLE: MovePage(h.arg, 0); break;
-    case G_SIZE: case A_OPEN: case A_SPEED: case T_SNOOZE: case T_WEEK: case T_VIEW: case D_RING: case A_STYLE: case G_PETSTYLE: SetChoice(h.id, h.arg); break;
-    case A_TINT: case O_FOCUS: case O_SHORT: case O_LONG: Step(h.id, h.arg); break;
+    case G_SIZE: case A_OPEN: case A_SPEED: case T_SNOOZE: case T_WEEK: case T_VIEW: case D_RING: case A_STYLE: case G_PETSTYLE: case W_GOAL: SetChoice(h.id, h.arg); break;
+    case A_TINT: case O_FOCUS: case O_SHORT: case O_LONG: case W_CUP: case W_FROM: case W_UNTIL: Step(h.id, h.arg); break;
     case T_PASTE: if (g_host.calPaste) g_host.calPaste(); break;
     case T_REFRESH: if (g_host.calRefresh) g_host.calRefresh(); break;
     case T_REMOVE: if (g_host.calRemove) g_host.calRemove(); break;

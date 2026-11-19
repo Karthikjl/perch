@@ -1,6 +1,7 @@
 // 1.5 Settings file. See settings.h.
 #include "settings.h"
 #include "mascot.h"
+#include <algorithm>
 #include <cwchar>
 #include <cwctype>
 #include <initializer_list>
@@ -27,7 +28,7 @@ const wchar_t* kDefaultFile =
     L"Minimal=0\r\n"
     L"; Clock: 1 shows the time on the closed pill.\r\n"
     L"Clock=1\r\n"
-    L"; Ring next to the clock: Battery, Tasks (tasks done today) or None.\r\n"
+    L"; Ring next to the clock: Battery, Water (today's water), Tasks (tasks done today) or None.\r\n"
     L"Ring=Battery\r\n"
     L"; Mascot: 1 for a little friend in the closed notch. It shows up when you leave the PC alone,\r\n"
     L"; dozes off, and wakes up when you come back.\r\n"
@@ -61,6 +62,16 @@ const wchar_t* kDefaultFile =
     L"RemindEnd=1\r\n"
     L"; Snooze: 5, 10 or 15 minutes (Later / +min on a reminder).\r\n"
     L"Snooze=10\r\n"
+    L"\r\n"
+    L"[Water]\r\n"
+    L"; Reminders: 1 reminds you to drink, spread across the active hours, until you reach the goal.\r\n"
+    L"Reminders=0\r\n"
+    L"; Goal: ml for the day (1500, 2000, 2500 or 3000). Cup: ml that one tap of + adds (100-1000).\r\n"
+    L"Goal=2000\r\n"
+    L"Cup=250\r\n"
+    L"; From / Until: the hours reminders come in, as HH:MM.\r\n"
+    L"From=08:00\r\n"
+    L"Until=17:00\r\n"
     L"\r\n"
     L"[Calendar]\r\n"
     L"; Link: your Google Calendar's \"Secret address in iCal format\" (Google Calendar > Settings >\r\n"
@@ -151,9 +162,19 @@ void ReadBool(const std::wstring& file, const wchar_t* section, const wchar_t* k
     value = n != 0;
 }
 
+// "HH:MM" -> minutes since midnight.
+void ReadClock(const std::wstring& file, const wchar_t* section, const wchar_t* key, int& value, std::wstring& problem) {
+    bool present;
+    std::wstring v = Read(file, section, key, present);
+    if (!present) return;
+    int h = -1, m = -1;
+    if (swscanf(v.c_str(), L"%d:%d", &h, &m) == 2 && h >= 0 && h < 24 && m >= 0 && m < 60) { value = h * 60 + m; return; }
+    if (problem.empty()) problem = std::wstring(section) + L": " + key + L" should be a time like 08:00";
+}
+
 const wchar_t* kStyles[] = {L"Classic", L"Floating"};
 const wchar_t* kSizes[] = {L"Auto", L"100%", L"115%", L"130%", L"150%"};
-const wchar_t* kRings[] = {L"Battery", L"None", L"Tasks"};
+const wchar_t* kRings[] = {L"Battery", L"None", L"Tasks", L"Water"};
 const wchar_t* kSnoozes[] = {L"5", L"10", L"15"};
 struct PopupKey { const wchar_t* key; bool Settings::*field; };
 const PopupKey kPopups[] = {{L"Volume", &Settings::popVolume},     {L"Brightness", &Settings::popBrightness},
@@ -198,11 +219,21 @@ std::wstring Settings_Load(const std::wstring& file, Settings& s) {
     ReadChoice(file, L"Notch", L"Size", {kSizes[0], kSizes[1], kSizes[2], kSizes[3], kSizes[4]}, s.size, problem);
     ReadBool(file, L"Notch", L"Minimal", s.minimal, problem);
     ReadBool(file, L"Notch", L"Clock", s.clock, problem);
-    ReadChoice(file, L"Notch", L"Ring", {kRings[0], kRings[1], kRings[2]}, s.ring, problem);
+    ReadChoice(file, L"Notch", L"Ring", {kRings[0], kRings[1], kRings[2], kRings[3]}, s.ring, problem);
     ReadBool(file, L"Notch", L"Mascot", s.mascot, problem);
     ReadChoice(file, L"Notch", L"MascotStyle", {kMascotKeys[0], kMascotKeys[1], kMascotKeys[2], kMascotKeys[3], kMascotKeys[4],
                kMascotKeys[5], kMascotKeys[6]}, s.mascotStyle, problem);
     for (const PopupKey& k : kPopups) ReadBool(file, L"Popups", k.key, s.*(k.field), problem);
+    ReadBool(file, L"Water", L"Reminders", s.waterRemind, problem);
+    {
+        int g = s.waterGoal == 1500 ? 0 : s.waterGoal == 2500 ? 2 : s.waterGoal == 3000 ? 3 : 1;
+        ReadChoice(file, L"Water", L"Goal", {L"1500", L"2000", L"2500", L"3000"}, g, problem);
+        s.waterGoal = 1500 + 500 * g;
+    }
+    ReadInt(file, L"Water", L"Cup", 100, 1000, s.waterCup, problem);
+    ReadClock(file, L"Water", L"From", s.waterFrom, problem);
+    ReadClock(file, L"Water", L"Until", s.waterUntil, problem);
+    if (s.waterUntil <= s.waterFrom) s.waterUntil = std::min(s.waterFrom + 60, 24 * 60 - 1);
     ReadInt(file, L"Pomodoro", L"Focus", 1, 120, s.pomoFocus, problem);
     ReadInt(file, L"Pomodoro", L"ShortBreak", 1, 60, s.pomoShort, problem);
     ReadInt(file, L"Pomodoro", L"LongBreak", 1, 60, s.pomoLong, problem);
@@ -266,6 +297,16 @@ void Settings_Save(const std::wstring& file, const Settings& s) {
     WritePrivateProfileStringW(L"Pomodoro", L"Focus", std::to_wstring(s.pomoFocus).c_str(), f);
     WritePrivateProfileStringW(L"Pomodoro", L"ShortBreak", std::to_wstring(s.pomoShort).c_str(), f);
     WritePrivateProfileStringW(L"Pomodoro", L"LongBreak", std::to_wstring(s.pomoLong).c_str(), f);
+    WritePrivateProfileStringW(L"Water", L"Reminders", s.waterRemind ? L"1" : L"0", f);
+    WritePrivateProfileStringW(L"Water", L"Goal", std::to_wstring(s.waterGoal).c_str(), f);
+    WritePrivateProfileStringW(L"Water", L"Cup", std::to_wstring(s.waterCup).c_str(), f);
+    {
+        wchar_t t[8];
+        swprintf(t, 8, L"%02d:%02d", s.waterFrom / 60, s.waterFrom % 60);
+        WritePrivateProfileStringW(L"Water", L"From", t, f);
+        swprintf(t, 8, L"%02d:%02d", s.waterUntil / 60, s.waterUntil % 60);
+        WritePrivateProfileStringW(L"Water", L"Until", t, f);
+    }
     WritePrivateProfileStringW(L"Sounds", L"Reminders", s.sounds ? L"1" : L"0", f);
     WritePrivateProfileStringW(L"ToDo", L"RemindStart", s.todoStart ? L"1" : L"0", f);
     WritePrivateProfileStringW(L"ToDo", L"RemindEnd", s.todoEnd ? L"1" : L"0", f);

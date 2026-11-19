@@ -82,7 +82,7 @@ try {
     # Control ids (settingsui.cpp); the window tells where each one is.
     $C = @{ Close = 1; Section = 2; Autostart = 3; Size = 4; Minimal = 5; Mascot = 6; Clock = 7; Sounds = 8; HideFs = 9; Ring = 10; PageUp = 11; PageDown = 12; PageToggle = 13;
             Style = 14; Glass = 15; Tint = 16; Open = 17; PageIcons = 18; Speed = 19; TStart = 20; TEnd = 21; Snooze = 22; Week = 23; View = 24;
-            Focus = 28; Short = 29; Long = 30; ShelfEmpty = 31; Volume = 32; Reset = 40; PetStyle = 41 }
+            Focus = 28; Short = 29; Long = 30; ShelfEmpty = 31; Volume = 32; Reset = 40; PetStyle = 41; WRemind = 42; WGoal = 43; WCup = 44; WFrom = 45; WUntil = 46 }
     function Section([int]$s) { [int][NotchTest]::SendMessage($setWin, [NotchTest]::WM_APP + 1, [IntPtr]$s, [IntPtr]::Zero) }
     function Spot([int]$id, [int]$arg = 0) { [int64][NotchTest]::SendMessage($setWin, [NotchTest]::WM_APP + 2, [IntPtr]$id, [IntPtr]$arg) }
     function Tap([int]$id, [int]$arg = 0) {
@@ -117,11 +117,12 @@ try {
     Assert (Wait-Until { (Get-Setting 9) -eq 0 } 2000) '...and back to Auto'
     Tap $C.HideFs | Out-Null
     Assert (Wait-Until { (IniText) -match '(?m)^HideInFullScreen=0' } 2000) 'Step aside for full screen can be switched off'
-    # Display: the ring cards; Water is coming soon and does nothing
+    # Display: the ring cards
     Section 1 | Out-Null
     Tap $C.Ring 2 | Out-Null
     Assert (Wait-Until { (Get-Setting 12) -eq 2 -and (IniText) -match '(?m)^Ring=Tasks' } 2000) 'Display: the To-do card sets Ring=Tasks'
-    Assert ((Spot $C.Ring 1) -lt 0) '...the Water card is Coming soon (not clickable)'
+    Tap $C.Ring 1 | Out-Null
+    Assert (Wait-Until { (IniText) -match '(?m)^Ring=Water' } 2000) '...the Water card sets Ring=Water'
     Tap $C.Ring 0 | Out-Null
     # Pages: hide Water, move Shelf up
     Section 2 | Out-Null
@@ -151,7 +152,16 @@ try {
     Tap $C.ShelfEmpty | Out-Null
     Assert (Wait-Until { (IniText) -match '(?m)^StartEmpty=1' } 2000) 'Shelf: Empty shelf at start'
     Section 9 | Out-Null
-    Assert ((Spot 1) -ge 0 -and (Spot $C.Focus 1) -lt 0) 'Water: everything is Coming soon (nothing clickable but the close dot)'
+    Tap $C.WRemind | Out-Null
+    Assert (Wait-Until { (IniText) -match '(?m)^Reminders=1' } 2000) 'Water: the reminders switch turns them on'
+    Tap $C.WGoal 2 | Out-Null
+    Assert (Wait-Until { (IniText) -match '(?m)^Goal=2500' } 2000) 'Water: Daily goal 2.5 L'
+    Tap $C.WCup 1 | Out-Null
+    Assert (Wait-Until { (IniText) -match '(?m)^Cup=300' } 2000) 'Water: + makes the cup 300 ml'
+    Tap $C.WFrom 1 | Out-Null
+    Assert (Wait-Until { (IniText) -match '(?m)^From=08:30' } 2000) 'Water: Active from 08:30'
+    Tap $C.WUntil -1 | Out-Null
+    Assert (Wait-Until { (IniText) -match '(?m)^Until=16:30' } 2000) 'Water: Active until 16:30'
 
     # hand edits while the window is open still apply
     $edited = (IniText) -replace '(?m)^Height=\d+', 'Height=36'

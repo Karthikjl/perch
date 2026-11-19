@@ -6,7 +6,7 @@
 
 <p align="center">
   A tiny, fast notch for the top of your Windows screen.<br>
-  Hover it for music, a focus timer, your shelf of files and today's tasks.
+  Hover it for music, a focus timer, water, your shelf of files and today's tasks.
 </p>
 
 <p align="center">
@@ -33,6 +33,7 @@ background polling: when the notch is closed, Perch is asleep until something ac
 | **Music** | Title, artist and cover art from any app in Windows' media controls (Spotify, browsers, Media Player…), a progress bar, previous / play-pause / next and mute. A mini cover and sound bars on the closed pill. |
 | **Pomodoro** | Four focus sessions with short breaks, then a long break (25 / 5 / 15 min, adjustable). A pop-up and a chime when each part ends; daily focus minutes are kept. |
 | **To-do** | Today's tasks with optional times and daily repeats. Reminders when a task starts and when its time is up, with snooze. |
+| **Water** | Tap + for each cup and watch today's total fill up toward your goal (1.5–3 L). Optional reminders spread across your active hours nudge you only when you're behind; *Drank* or *Later* right on the pop-up. A Water ring for the closed notch, too. |
 | **Calendar** | Month and week views on the To-do page, from your own Google Calendar iCal link. Refreshes every 30 minutes. |
 | **Shelf** | Drop files on the notch to keep them handy, then drag them out into any app later. Survives restarts. |
 | **Pop-ups** | Volume, brightness, output device, battery (charging, low, full), Caps Lock, input language, Wi-Fi and Bluetooth headsets. Each can be turned off. |
@@ -66,6 +67,7 @@ if you add a calendar link. Everything it keeps stays in `%APPDATA%\Perch`:
 | `tasks.txt` | Your to-do list |
 | `calendar.ics` | The last calendar download |
 | `focus.txt` | Pomodoro sessions and focus minutes per day |
+| `water.txt` | Water per day, in ml |
 
 *Start with Windows* adds `Perch` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
 
@@ -112,7 +114,7 @@ it matters, and skip rather than click into another app.
 - The brightness pop-up covers the built-in laptop display only.
 - Wired headphones on a shared jack may not trigger the output-device pop-up.
 - Pop-ups don't show while a full screen app is in front.
-- Some settings say *Coming soon*: lyrics, widgets, water reminders and a few more are on the way.
+- Some settings say *Coming soon*: lyrics, widgets and a few more are on the way.
 
 ## Contributing
 

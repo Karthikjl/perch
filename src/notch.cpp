@@ -130,14 +130,17 @@ enum {
                                         //        (selected day - today + 1000) << 4; 3 = download again; 4 = month shown (y * 100 + m)
     WM_APP_CAL_DONE = WM_APP + 30,      // calendar download finished: lp = CalJob*
     WM_APP_TRAY = WM_APP + 31,          // the tray icon was clicked
-    WM_APP_STRAY = WM_APP + 32,         // tests: pixels of the window that aren't clear, outside the area the notch drew last frame
+    WM_APP_STRAY = WM_APP + 32,
+    WM_APP_WATER = WM_APP + 33,         // tests: wp 0 = today's ml; 1 = add lp ml (may be < 0); 2 = reminder check as if the minute were lp
+                                        //        (returns 1 if the water pop-up shows); 3 = next reminder minute (-1: none)         // tests: pixels of the window that aren't clear, outside the area the notch drew last frame
 };
 enum SettingQuery { SQ_WIDTH = 2, SQ_HEIGHT, SQ_ROUNDNESS, SQ_LOADS = 6, SQ_STYLE, SQ_GLASS, SQ_SIZE, SQ_MINIMAL, SQ_CLOCK, SQ_RING,
                     SQ_SCALE_X1000 }; // tests: SQ_SCALE_X1000 = px per DIP x 1000 (DPI x size)
 enum { TIMER_ANIM = 1, TIMER_CLOCK = 2, TIMER_FLASH = 3, TIMER_SETTINGS = 6, TIMER_MINUTE = 7, TIMER_CAPS = 8, TIMER_LANG = 9, TIMER_POMO = 10, TIMER_TODO = 11,
        TIMER_PET_IDLE = 12, TIMER_PET_ANIM = 13, // mascot: away 15 s / its frames
        TIMER_CAL = 14,                           // calendar: download again
-       TIMER_PEEK = 15 };                        // hover: open after the peek
+       TIMER_PEEK = 15,                          // hover: open after the peek
+       TIMER_WATER = 16 };                       // water: the next reminder (or midnight)                        // hover: open after the peek
 enum { CMD_QUIT = 100, CMD_AUTOSTART = 101,
        CMD_MEDIA_PLAYPAUSE = 104, CMD_MEDIA_NEXT = 105, CMD_MEDIA_PREV = 106, CMD_SHELF_CLEAR = 107,
        CMD_SETTINGS = 109, CMD_POMO_TOGGLE = 110, CMD_POMO_RESET = 111,
@@ -848,6 +851,7 @@ enum Hot { HOT_NONE = -1, HOT_ARROW_L = 0, HOT_ARROW_R, HOT_DOTS, HOT_LYRICS, HO
            HOT_TODO_ADD = 42, HOT_TODO_EDIT, HOT_TODO_CAL, HOT_TODO_TITLE, HOT_TODO_TIME, HOT_TODO_DAILY, HOT_TODO_CANCEL,
            HOT_TODO_SAVE, HOT_TODO_CLEAR, HOT_ACT_A, HOT_ACT_B, // HOT_ACT_*: buttons on a reminder pop-up
            HOT_CAL_PREV = 53, HOT_CAL_NEXT, HOT_CAL_TITLE, // calendar: previous / next month (week), Month <-> Week
+           HOT_WATER_ADD = 56, HOT_WATER_UNDO,             // water page: + a cup, take one back
            HOT_TODO_ROW0 = 60, HOT_TODO_UP0 = 100, HOT_TODO_DOWN0 = 140, HOT_TODO_DEL0 = 180, HOT_TODO_MAX = 220, // + row
            HOT_CAL_DAY0 = 230, HOT_CAL_DAYMAX = 272 }; // + calendar cell
 static D2D1_POINT_2F TodoHotCenter(int hot); // To-do page and reminder pop-up controls
@@ -864,6 +868,8 @@ static D2D1_POINT_2F HotCenter(int hot) {
     case HOT_VOLUME: return D2D1::Point2F(px + 352, 137);
     case HOT_POMO_START: return D2D1::Point2F(px + 310, 64);
     case HOT_POMO_RESET: return D2D1::Point2F(px + 355, 63);
+    case HOT_WATER_ADD: return D2D1::Point2F(px + 245, 105);
+    case HOT_WATER_UNDO: return D2D1::Point2F(px + 322, 105);
     }
     if ((hot >= HOT_TODO_ADD && hot < HOT_TODO_MAX) || (hot >= HOT_CAL_DAY0 && hot < HOT_CAL_DAYMAX)) return TodoHotCenter(hot);
     if (hot >= HOT_ICON0 || hot == HOT_ICON_SETTINGS) { // icon bar: page icons, a divider, then settings
@@ -873,7 +879,8 @@ static D2D1_POINT_2F HotCenter(int hot) {
     }
     return D2D1::Point2F(-100, -100);
 }
-static float HotRadius(int hot) { return hot == HOT_POMO_RESET ? 10 : hot == HOT_ARROW_L || hot == HOT_ARROW_R ? 12 : hot >= HOT_ICON_SETTINGS ? 12 : kCtlR; }
+static D2D1_RECT_F WaterAddRect() { float px = PX(); return D2D1::RectF(px + 194, 92, px + 296, 118); }
+static float HotRadius(int hot) { return hot == HOT_POMO_RESET || hot == HOT_WATER_UNDO ? 11 : hot == HOT_ARROW_L || hot == HOT_ARROW_R ? 12 : hot >= HOT_ICON_SETTINGS ? 12 : kCtlR; }
 static D2D1_RECT_F DotsRect() { // area that reveals the page icons
     float cx = kWinW / 2, w = 28.0f * g_pageN + 36 + 36;
     return D2D1::RectF(cx - w / 2, kDotsY - 8, cx + w / 2, kDotsY + 8 + 30 * g_iconBar);
@@ -1658,7 +1665,7 @@ static int g_edit = 0;                 // editor: 0 closed, 1 new task, 2 editin
 static int g_editIdx = -1, g_editField = 0; // 0 title, 1 time
 static std::wstring g_editTitle, g_editTime; // time: up to 8 digits, HHMMHHMM
 static bool g_editDaily = false, g_editBadTitle = false, g_editBadTime = false;
-struct Reminder { int task; int kind; }; // kind 1 = Task Time!, 2 = Time's Up!
+struct Reminder { int task; int kind; }; // kind 1 = Task Time!, 2 = Time's Up!, 3 = water (task -1)
 static std::vector<Reminder> g_remQueue;
 static Reminder g_rem = {-1, 0};          // the one showing
 
@@ -1738,6 +1745,100 @@ static void LoadTasks() {
     RollTasks(TodayStamp());
 }
 
+// ---- Water ----
+// Today's water in ml. water.txt keeps one line per day, "YYYYMMDD ml". Reminders split the goal into
+// cups spread evenly over the active hours: at each cup's time, if you're behind, a pop-up asks
+// (Later / Drank). One SetTimer for the next such time; none once the goal is reached or reminders are off.
+static int g_waterDay = 0, g_waterMl = 0;
+static int g_waterLater = -1; // "Later": remind again at this minute (today)
+static const D2D1_COLOR_F kWaterBlue = {0.30f, 0.68f, 1.0f, 1}; // #4CADFF
+static std::wstring WaterFile() { return DataDir() + L"\\water.txt"; }
+static void LoadWater() {
+    int today = TodayStamp();
+    g_waterDay = today;
+    g_waterMl = 0;
+    g_waterLater = -1;
+    if (FILE* f = _wfopen(WaterFile().c_str(), L"r")) {
+        int d, ml;
+        while (fwscanf(f, L"%d %d", &d, &ml) == 2) if (d == today) g_waterMl = std::max(0, ml);
+        fclose(f);
+    }
+}
+static void SaveWater() {
+    std::vector<std::pair<int, int>> days;
+    if (FILE* f = _wfopen(WaterFile().c_str(), L"r")) {
+        int d, ml;
+        while (fwscanf(f, L"%d %d", &d, &ml) == 2) if (d != g_waterDay) days.push_back({d, ml});
+        fclose(f);
+    }
+    days.push_back({g_waterDay, g_waterMl});
+    if (days.size() > 400) days.erase(days.begin(), days.end() - 400); // about a year
+    if (FILE* f = _wfopen(WaterFile().c_str(), L"w")) {
+        for (auto& p : days) fwprintf(f, L"%d %d\n", p.first, p.second);
+        fclose(f);
+    }
+}
+static int WaterToday() { return g_waterDay == TodayStamp() ? g_waterMl : 0; } // a new day starts at 0
+static float WaterFraction() { return g_set.waterGoal > 0 ? Clamp01((float)WaterToday() / g_set.waterGoal) : 0; }
+static int WaterCups() { return std::max(1, (g_set.waterGoal + g_set.waterCup - 1) / g_set.waterCup); }
+static int WaterNextDue(int now) { // the next minute a reminder is due, or -1
+    if (!g_set.waterRemind || WaterToday() >= g_set.waterGoal) return -1;
+    if (g_waterLater > now) return g_waterLater;
+    int n = WaterCups(), span = g_set.waterUntil - g_set.waterFrom, ml = WaterToday();
+    for (int k = 1; k <= n; k++) {
+        int t = g_set.waterFrom + span * k / n;
+        if (t > now && ml < std::min(k * g_set.waterCup, g_set.waterGoal)) return t;
+    }
+    return -1;
+}
+static void ArmWaterTimer() {
+    int now = NowMinute(), due = WaterNextDue(now);
+    if (due < 0) due = 24 * 60; // midnight: a new day
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    long long ms = (long long)(due - now) * 60000 - st.wSecond * 1000 - st.wMilliseconds + 300;
+    SetTimer(g_hwnd, TIMER_WATER, (UINT)std::max(1000LL, ms), nullptr);
+}
+static void ShowNextReminder();
+static void OnWaterTimer() {
+    int now = NowMinute();
+    if (g_waterDay != TodayStamp()) LoadWater();
+    bool due = g_waterLater >= 0 ? now >= g_waterLater : true;
+    if (g_waterLater >= 0 && now >= g_waterLater) g_waterLater = -1;
+    int ml = WaterToday(), n = WaterCups(), span = g_set.waterUntil - g_set.waterFrom, behind = 0;
+    for (int k = 1; k <= n; k++) if (g_set.waterFrom + span * k / n <= now) behind = std::min(k * g_set.waterCup, g_set.waterGoal);
+    bool inHours = now >= g_set.waterFrom && now <= g_set.waterUntil + 1;
+    if (due && g_set.waterRemind && inHours && ml < behind && ml < g_set.waterGoal) {
+        bool queued = (g_act && g_rem.kind == 3);
+        for (const Reminder& r : g_remQueue) queued |= r.kind == 3;
+        if (!queued) g_remQueue.push_back({-1, 3});
+        if (!g_act) ShowNextReminder();
+    }
+    ArmWaterTimer();
+}
+static void WaterAdd(int ml) { // + a cup, or - to take one back
+    if (g_waterDay != TodayStamp()) LoadWater();
+    g_waterMl = std::max(0, std::min(g_waterMl + ml, 20000));
+    SaveWater();
+    ArmWaterTimer();
+    if (SettingsUI_IsOpen()) SettingsUI_Refresh(g_set); // "Today" in the Water section
+}
+static void FormatLitres(int ml, wchar_t* out, int n) { // 1250 -> "1.25 L", 2000 -> "2 L", 300 -> "300 ml"
+    if (ml < 1000) { swprintf(out, n, L"%d ml", ml); return; }
+    wchar_t b[16];
+    swprintf(b, 16, L"%.2f", ml / 1000.0);
+    size_t len = wcslen(b);
+    while (len && b[len - 1] == L'0') b[--len] = 0;
+    if (len && b[len - 1] == L'.') b[--len] = 0;
+    swprintf(out, n, L"%ls L", b);
+}
+static void UiWaterStatus(wchar_t* out, int n) {
+    wchar_t a[16], g[16];
+    FormatLitres(WaterToday(), a, 16);
+    FormatLitres(g_set.waterGoal, g, 16);
+    swprintf(out, n, L"%ls of %ls", a, g);
+}
+
 // ---- reminders ----
 static void ArmTodoTimer() {
     if (g_tasks.empty()) { KillTimer(g_hwnd, TIMER_TODO); return; }
@@ -1785,14 +1886,15 @@ static void ShowNextReminder() {
     while (!g_remQueue.empty()) {
         Reminder r = g_remQueue.front();
         g_remQueue.erase(g_remQueue.begin());
-        if (r.task < 0 || r.task >= (int)g_tasks.size() || TaskDone(g_tasks[r.task], today)) continue;
+        if (r.kind == 3 ? WaterToday() >= g_set.waterGoal : r.task < 0 || r.task >= (int)g_tasks.size() || TaskDone(g_tasks[r.task], today)) continue;
         g_rem = r;
         g_act = true;
         g_toast = true;
         g_flash = true; // stays open until answered
         KillTimer(g_hwnd, TIMER_FLASH);
         wchar_t text[200];
-        swprintf(text, 200, L"%ls | %ls", r.kind == 1 ? L"Task Time!" : L"Time's Up!", g_tasks[r.task].title.c_str());
+        if (r.kind == 3) { wchar_t s[64]; UiWaterStatus(s, 64); swprintf(text, 200, L"Time for water | %ls so far", s); }
+        else swprintf(text, 200, L"%ls | %ls", r.kind == 1 ? L"Task Time!" : L"Time's Up!", g_tasks[r.task].title.c_str());
         text[199] = 0;
         if (g_toastAtom) GlobalDeleteAtom(g_toastAtom);
         g_toastAtom = GlobalAddAtomW(text);
@@ -1808,7 +1910,10 @@ static void ShowNextReminder() {
 
 static void AnswerReminder(bool second) { // the pop-up's buttons: Later / Start, +N min / Done
     int today = TodayStamp(), now = NowMinute();
-    if (g_rem.task >= 0 && g_rem.task < (int)g_tasks.size()) {
+    if (g_rem.kind == 3) { // water: Later / Drank
+        if (second) WaterAdd(g_set.waterCup);
+        else { g_waterLater = now + g_set.snooze; ArmWaterTimer(); }
+    } else if (g_rem.task >= 0 && g_rem.task < (int)g_tasks.size()) {
         Task& t = g_tasks[g_rem.task];
         if (g_rem.kind == 1 && !second) { t.remindAt = now + g_set.snooze; t.startShown = 0; }  // Later
         else if (g_rem.kind == 2 && !second) { t.end = std::min(t.end + g_set.snooze, 24 * 60 - 1); t.endShown = 0; } // +N min
@@ -1830,8 +1935,8 @@ static void AnswerReminder(bool second) { // the pop-up's buttons: Later / Start
 static void ActButtons(const wchar_t** a, const wchar_t** b) {
     static wchar_t more[16];
     swprintf(more, 16, L"+%d min", g_set.snooze);
-    *a = g_rem.kind == 1 ? L"Later" : more;
-    *b = g_rem.kind == 1 ? L"Start" : L"Done";
+    *a = g_rem.kind == 2 ? more : L"Later";
+    *b = g_rem.kind == 1 ? L"Start" : g_rem.kind == 3 ? L"Drank" : L"Done";
 }
 static D2D1_RECT_F ActButtonRect(bool second) {
     const wchar_t *a, *b;
@@ -1848,25 +1953,35 @@ static void DrawClipboardCheck(D2D1_POINT_2F c, D2D1_COLOR_F col) { // the task 
     g_rt->DrawLine(D2D1::Point2F(c.x - 4, c.y + 2), D2D1::Point2F(c.x - 1, c.y + 5.2f), g_brush, 1.8f, g_round);
     g_rt->DrawLine(D2D1::Point2F(c.x - 1, c.y + 5.2f), D2D1::Point2F(c.x + 4.5f, c.y - 1.2f), g_brush, 1.8f, g_round);
 }
+static void DrawPageIcon(int page, D2D1_POINT_2F c, D2D1_COLOR_F col);
 static void DrawActToast(float a) {
-    if (g_rem.task < 0 || g_rem.task >= (int)g_tasks.size()) return;
+    bool water = g_rem.kind == 3;
+    if (!water && (g_rem.task < 0 || g_rem.task >= (int)g_tasks.size())) return;
     float ax = (kWinW - kActW) / 2;
     D2D1_POINT_2F ic = D2D1::Point2F(ax + 40, 30);
-    g_brush->SetColor(WithAlpha(kTodoGreen, 0.3f * a));
+    g_brush->SetColor(WithAlpha(water ? kWaterBlue : kTodoGreen, 0.3f * a));
     g_rt->DrawEllipse(D2D1::Ellipse(ic, 25.5f, 25.5f), g_brush, 2.4f);
-    DrawClipboardCheck(ic, WithAlpha(g_fg, a));
+    if (water) {
+        D2D1_MATRIX_3X2_F old;
+        g_rt->GetTransform(&old);
+        g_rt->SetTransform(D2D1::Matrix3x2F::Scale(1.6f, 1.6f, ic) * old);
+        DrawPageIcon(PAGE_WATER, ic, WithAlpha(g_fg, a));
+        g_rt->SetTransform(old);
+    } else DrawClipboardCheck(ic, WithAlpha(g_fg, a));
+    wchar_t sub[64];
+    if (water) { UiWaterStatus(sub, 64); wcscat(sub, L" so far"); }
     const wchar_t *ta, *tb;
     ActButtons(&ta, &tb);
     D2D1_RECT_F ra = ActButtonRect(false), rb = ActButtonRect(true);
     float textR = ra.left - 8;
-    Text(g_rem.kind == 1 ? L"Task Time!" : L"Time's Up!", g_fmtActTitle, D2D1::RectF(ax + 76, 13, textR, 33), WithAlpha(g_fg, a));
-    Text(g_tasks[g_rem.task].title.c_str(), g_fmtActSub, D2D1::RectF(ax + 76, 33, textR, 47), WithAlpha(g_grey, a));
+    Text(water ? L"Time for water" : g_rem.kind == 1 ? L"Task Time!" : L"Time's Up!", g_fmtActTitle, D2D1::RectF(ax + 76, 13, textR, 33), WithAlpha(g_fg, a));
+    Text(water ? sub : g_tasks[g_rem.task].title.c_str(), g_fmtActSub, D2D1::RectF(ax + 76, 33, textR, 47), WithAlpha(g_grey, a));
     g_brush->SetColor(Rgb(0x262629, a * (g_hot == HOT_ACT_A ? 1.25f : 1)));
     g_rt->FillRoundedRectangle(D2D1::RoundedRect(ra, 14, 14), g_brush);
     Text(ta, g_fmtActBtn, ra, WithAlpha(g_fg, a));
-    g_brush->SetColor(Rgb(g_hot == HOT_ACT_B ? 0x0A5A26 : 0x054019, a));
+    g_brush->SetColor(Rgb(water ? (g_hot == HOT_ACT_B ? 0x15426E : 0x0D2E4F) : (g_hot == HOT_ACT_B ? 0x0A5A26 : 0x054019), a));
     g_rt->FillRoundedRectangle(D2D1::RoundedRect(rb, 14, 14), g_brush);
-    Text(tb, g_fmtActBtn, rb, Rgb(0x30FF5C, a));
+    Text(tb, g_fmtActBtn, rb, Rgb(water ? 0x4CADFF : 0x30FF5C, a));
 }
 
 // ---- page layout (DIPs from the open pill's left edge) ----
@@ -2625,6 +2740,59 @@ static void DrawMascot(ID2D1Geometry* shape, D2D1_RECT_F p, float a, float shown
     }
 }
 
+// Water page: today's amount and the goal on the left; on the right the next reminder, "+ cup" and undo.
+static void DrawWaterPage(float a) {
+    float px = PX();
+    D2D1_COLOR_F fg = WithAlpha(g_fg, a), grey = WithAlpha(g_grey, a);
+    Text(L"Water", g_fmtHdr, D2D1::RectF(px + 32, 21.6f, px + 120, 41.6f), fg);
+    wchar_t buf[64], amt[16], goal[16];
+    int ml = WaterToday();
+    FormatLitres(ml, amt, 16);
+    FormatLitres(g_set.waterGoal, goal, 16);
+    Text(L"Today", g_fmtPomoSmall, D2D1::RectF(px + 34, 50, px + 178, 64.4f), grey);
+    Text(amt, g_fmtPomoTime, D2D1::RectF(px + 33, 66, px + 180, 102), fg);
+    int cups = WaterCups(), had = std::min(cups, (ml + g_set.waterCup / 2) / g_set.waterCup);
+    swprintf(buf, 64, L"of %ls \x00B7 %d of %d cups", goal, had, cups);
+    Text(buf, g_fmtPomoSub, D2D1::RectF(px + 34, 108, px + 180, 127), fg);
+    D2D1_RECT_F track = D2D1::RectF(px + 34, 133, px + 162, 137);
+    g_brush->SetColor(WithAlpha(g_fg, 0.14f * a));
+    g_rt->FillRoundedRectangle(D2D1::RoundedRect(track, 2, 2), g_brush);
+    float f = WaterFraction();
+    if (f > 0) {
+        D2D1_RECT_F fill = track;
+        fill.right = track.left + (track.right - track.left) * f;
+        g_brush->SetColor(WithAlpha(kWaterBlue, a));
+        g_rt->FillRoundedRectangle(D2D1::RoundedRect(fill, 2, 2), g_brush);
+    }
+
+    g_brush->SetColor(WithAlpha(g_fg, 0.1f * a));
+    g_rt->FillRectangle(D2D1::RectF(px + 180.5f, 54, px + 181.5f, 140), g_brush);
+
+    Text(L"Next reminder", g_fmtPomoSmall, D2D1::RectF(px + 194, 53.2f, px + 364, 69.2f), grey);
+    int due = WaterNextDue(NowMinute());
+    if (ml >= g_set.waterGoal) wcscpy(buf, L"Goal reached");
+    else if (!g_set.waterRemind) wcscpy(buf, L"Reminders off");
+    else if (due < 0) wcscpy(buf, L"None left today");
+    else swprintf(buf, 64, L"%02d:%02d", due / 60, due % 60);
+    Text(buf, g_fmtPomoSub, D2D1::RectF(px + 194, 68, px + 364, 87), ml >= g_set.waterGoal ? WithAlpha(kWaterBlue, a) : fg);
+
+    D2D1_RECT_F add = WaterAddRect();
+    g_brush->SetColor(WithAlpha(kWaterBlue, a * (g_hot == HOT_WATER_ADD ? 1.0f : 0.85f)));
+    g_rt->FillRoundedRectangle(D2D1::RoundedRect(add, 13, 13), g_brush);
+    wchar_t cup[24];
+    FormatLitres(g_set.waterCup, buf, 16);
+    swprintf(cup, 24, L"+ %ls", buf);
+    Text(cup, g_fmtPomoBtn, add, Rgb(0x0B1E33, a));
+    D2D1_POINT_2F uc = HotCenter(HOT_WATER_UNDO);
+    g_brush->SetColor(WithAlpha(g_hot == HOT_WATER_UNDO ? g_fg : g_chip, (g_hot == HOT_WATER_UNDO ? 0.22f : 1.0f) * a));
+    g_rt->FillEllipse(D2D1::Ellipse(uc, 11, 11), g_brush);
+    g_brush->SetColor(WithAlpha(g_fg, (ml > 0 ? 0.85f : 0.3f) * a)); // a minus: take one cup back
+    g_rt->FillRectangle(D2D1::RectF(uc.x - 4.5f, uc.y - 0.8f, uc.x + 4.5f, uc.y + 0.8f), g_brush);
+
+    swprintf(buf, 64, L"Active %02d:%02d\x2013%02d:%02d", g_set.waterFrom / 60, g_set.waterFrom % 60, g_set.waterUntil / 60, g_set.waterUntil % 60);
+    Text(buf, g_fmtPomoFoot, D2D1::RectF(px + 194, 124.5f, px + 370, 139.5f), grey);
+}
+
 static void DrawComingSoonPage(int page, float a);
 static void DrawPage(int page, float a, float dx) {
     if (a <= 0.01f) return;
@@ -2632,6 +2800,7 @@ static void DrawPage(int page, float a, float dx) {
     if (page == PAGE_MUSIC) DrawMusicPage(a);
     else if (page == PAGE_POMODORO) DrawPomodoroPage(a);
     else if (page == PAGE_TODO) DrawTodoPage(a);
+    else if (page == PAGE_WATER) DrawWaterPage(a);
     else if (page == PAGE_SHELF) {
         Text(L"Shelf", g_fmtHdr, D2D1::RectF(PX() + 32, 21.6f, PX() + 110, 41.6f), WithAlpha(g_fg, a));
         DrawShelf(a);
@@ -2890,10 +3059,11 @@ static void Render() {
             DrawSoundBars(D2D1::Point2F(x + w - 22.2f, cy), pb, 4.2f, pillContent); // 52.8 right of the centre
         }
         {
-            bool ring = (g_set.ring == RING_BATTERY && g_battPct >= 0) || g_set.ring == RING_TASKS;
+            bool ring = (g_set.ring == RING_BATTERY && g_battPct >= 0) || g_set.ring == RING_TASKS || g_set.ring == RING_WATER;
             bool small = w < 130; // Minimal: ring and time sit closer together
             float ringX = x + (small ? 18 : 20); // ring centre 20 from the pill's left edge (55 left of the centre)
             if (ring && g_set.ring == RING_TASKS) DrawRingArc(D2D1::Point2F(ringX, cy), TasksDoneFraction(), kRingGreen, pillContent);
+            else if (ring && g_set.ring == RING_WATER) DrawRingArc(D2D1::Point2F(ringX, cy), WaterFraction(), kWaterBlue, pillContent);
             else if (ring) DrawRing(D2D1::Point2F(ringX, cy), pillContent);
             if (g_set.clock) {
                 SYSTEMTIME st;
@@ -3304,6 +3474,7 @@ static void ApplySettings(bool announce, bool quiet = false) {
         CreateSurface();
     }
     ArmMinuteTimer();
+    if (g_hwnd) ArmWaterTimer();
     UpdateKeyboardHook();
     SetGlassColours(g_set.glass);
     SetBlur(g_set.glass);
@@ -3356,7 +3527,7 @@ static void UiCalStatus(wchar_t* out, int n) { // the status under "Calendar lin
 }
 static void OpenSettings(int section = -1) {
     SettingsUIHost host = {UiCommit, OpenSettingsFile, AutostartEnabled, SetAutostart,
-                           CalPasteLink, []() { CalFetch(true); }, []() { CalSetLink(L""); }, UiCalStatus};
+                           CalPasteLink, []() { CalFetch(true); }, []() { CalSetLink(L""); }, UiCalStatus, UiWaterStatus};
     SettingsUI_Show(g_inst, g_set, host, section);
 }
 
@@ -3580,6 +3751,11 @@ static int HitHot(float x, float y) {
         if (x >= px + 280 && x < px + 340 && y >= 53 && y < 75) return HOT_POMO_START;
         if (over(HOT_POMO_RESET)) return HOT_POMO_RESET;
     }
+    if (g_page == PAGE_WATER) {
+        D2D1_RECT_F r = WaterAddRect();
+        if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) return HOT_WATER_ADD;
+        if (over(HOT_WATER_UNDO)) return HOT_WATER_UNDO;
+    }
     if (ShelfInteractive()) {
         auto in = [&](D2D1_RECT_F r) { return x >= r.left && x < r.right && y >= r.top && y < r.bottom; };
         if (in(ShelfClearRect())) return HOT_SHELF_CLEAR;
@@ -3608,6 +3784,8 @@ static void ClickHot(int hot) {
     case HOT_SHELF_CLEAR: ShelfClear(); break;
     case HOT_POMO_START: PomoToggle(); break;
     case HOT_POMO_RESET: PomoReset(); break;
+    case HOT_WATER_ADD: WaterAdd(g_set.waterCup); break;
+    case HOT_WATER_UNDO: WaterAdd(-g_set.waterCup); break;
     case HOT_TODO_ADD: case HOT_TODO_EDIT: case HOT_TODO_CAL: case HOT_TODO_TITLE: case HOT_TODO_TIME: case HOT_TODO_DAILY:
     case HOT_TODO_CANCEL: case HOT_TODO_SAVE: case HOT_TODO_CLEAR: case HOT_ACT_A: case HOT_ACT_B:
     case HOT_CAL_PREV: case HOT_CAL_NEXT: case HOT_CAL_TITLE: TodoClick(hot); break;
@@ -3790,6 +3968,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == TIMER_ANIM) OnAnimTick();
         else if (wp == TIMER_CLOCK) { if (!g_hidden) Render(); }
         else if (wp == TIMER_TODO) { KillTimer(hwnd, TIMER_TODO); CheckTaskReminders(NowMinute()); if (!g_hidden) Render(); }
+        else if (wp == TIMER_WATER) { KillTimer(hwnd, TIMER_WATER); OnWaterTimer(); if (!g_hidden) Render(); }
         else if (wp == TIMER_POMO) {
             if (PomoLeftMs() > 0) PomoArm(); // fired a little early: wait for the rest
             else { KillTimer(hwnd, TIMER_POMO); PomoPhaseEnded(); }
@@ -3912,6 +4091,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if ((g_bits[y * g_pxW + x] >> 24) && (y >= b || x < l || x >= r)) n++;
         return n;
     }
+    case WM_APP_WATER:
+        if (wp == 0) return WaterToday();
+        if (wp == 1) { WaterAdd((int)lp); if (!g_hidden) Render(); return WaterToday(); }
+        if (wp == 2) { g_testMinute = (int)lp; OnWaterTimer(); if (!g_hidden) Render(); return g_act && g_rem.kind == 3 ? 1 : 0; }
+        if (wp == 3) return WaterNextDue(NowMinute());
+        return 0;
     case WM_APP_CAL: {
         int today = Cal_Today();
         if (wp == 1) { std::vector<CalItem> items; CalItemsOn(today + (int)lp, items); return (LRESULT)items.size(); }
@@ -3951,6 +4136,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_TIMECHANGE: // clock or time zone changed: the closed pill's time follows at once
         ArmMinuteTimer();
         CheckTaskReminders(NowMinute());
+        ArmWaterTimer();
         if (!g_hidden) Render();
         return 0;
     case WM_DPICHANGED:
@@ -4015,6 +4201,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
                              nullptr, 0, &g_round);
     LoadShelf();
     LoadTasks();
+    LoadWater();
 
     WNDCLASSW wc = {};
     wc.style = CS_DBLCLKS;

@@ -6,7 +6,7 @@ Start-Sleep -Milliseconds 300
 cmd /c "`"$root\build.bat`""
 if ($LASTEXITCODE -ne 0) { Write-Host 'BUILD FAILED' -ForegroundColor Red; exit 1 }
 
-$tests = 'test_core', 'test_autostart', 'test_fullscreen', 'test_media', 'test_volume', 'test_output_device', 'test_battery', 'test_brightness', 'test_shelf', 'test_settings', 'test_look', 'test_pages', 'test_closed', 'test_popups', 'test_pomodoro', 'test_todo', 'test_mascot', 'test_calendar'
+$tests = 'test_core', 'test_autostart', 'test_fullscreen', 'test_media', 'test_volume', 'test_output_device', 'test_battery', 'test_brightness', 'test_shelf', 'test_settings', 'test_look', 'test_pages', 'test_closed', 'test_popups', 'test_pomodoro', 'test_todo', 'test_mascot', 'test_calendar', 'test_water'
 $results = foreach ($t in $tests) {
     & powershell -NoProfile -STA -ExecutionPolicy Bypass -File "$PSScriptRoot\$t.ps1"
     [pscustomobject]@{ Test = $t; Result = if ($LASTEXITCODE -eq 0) { 'PASS' } else { 'FAIL' } }

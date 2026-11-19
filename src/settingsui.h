@@ -14,6 +14,7 @@ struct SettingsUIHost {
     void (*calRefresh)();
     void (*calRemove)();
     void (*calStatus)(wchar_t* out, int n);     // "Not connected", "Connected · 12 events · Updated 14:02"
+    void (*waterStatus)(wchar_t* out, int n);   // Water > Today: "1.25 L of 2 L"
 };
 
 // Sections, in sidebar order.

@@ -7,7 +7,7 @@
 
 enum NotchStyle { STYLE_NOTCH = 0, STYLE_ISLAND }; // Classic (joined to the top edge) / Floating (just below it)
 enum NotchSize { SIZE_AUTO = 0, SIZE_100, SIZE_115, SIZE_130, SIZE_150 }; // "Notch size": scales the whole notch
-enum RingKind { RING_BATTERY = 0, RING_NONE, RING_TASKS };               // "Ring next to the clock"
+enum RingKind { RING_BATTERY = 0, RING_NONE, RING_TASKS, RING_WATER };               // "Ring next to the clock"
 
 struct Settings {
     int width = 150, height = 30, roundness = 14; // closed pill, DIPs (150 x 30, corners 14)
@@ -35,6 +35,11 @@ struct Settings {
     bool pageIcons = true;       // "Page icons": show them when you hover the page dots
     bool fastAnim = false;       // "Animation speed": Normal / Fast
     int glassTint = 40;          // "Glass tint", percent (0-100, steps of 10)
+    // Water: a goal for the day, the size of one drink, and reminders spread across the active hours. [Water]
+    bool waterRemind = false;    // Reminders
+    int waterGoal = 2000;        // Goal, ml: 1500, 2000, 2500 or 3000
+    int waterCup = 250;          // Cup, ml: what one tap of "+" adds (100-1000)
+    int waterFrom = 8 * 60, waterUntil = 17 * 60; // From / Until, minutes since midnight
     bool shelfEmpty = false;     // Shelf: "Empty shelf at start"
     std::wstring pageOrder = L"music,pomodoro,water,shelf,todo"; // [Pages] Order
     std::wstring pagesHidden = L"widgets";                        // [Pages] Hidden
