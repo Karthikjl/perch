@@ -1,0 +1,39 @@
+# Builds Perch.exe on GitHub for every push and pull request. Download it from the run's
+# "Artifacts" section. (The tests need a real desktop, mouse and speakers, so they run locally:
+# tests\run_all.ps1.)
+name: Build
+
+on:
+  push:
+    branches: ['**'] # tags go to release.yml
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find MinGW
+        shell: pwsh
+        run: |
+          if (-not (Get-Command g++ -ErrorAction SilentlyContinue)) {
+            if (Test-Path C:\mingw64\bin\g++.exe) { 'C:\mingw64\bin' >> $env:GITHUB_PATH }
+            else { choco install mingw -y --no-progress; 'C:\ProgramData\mingw64\mingw64\bin' >> $env:GITHUB_PATH }
+          }
+
+      - name: Compiler version
+        shell: cmd
+        run: g++ --version
+
+      - name: Build Perch.exe
+        shell: cmd
+        run: build.bat
+
+      - name: Upload Perch.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: Perch-${{ github.sha }}
+          path: build/Perch.exe
+          if-no-files-found: error

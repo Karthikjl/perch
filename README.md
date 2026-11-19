@@ -1,0 +1,130 @@
+<p align="center">
+  <img src="assets/perch.svg" width="96" height="96" alt="Perch logo">
+</p>
+
+<h1 align="center">Perch</h1>
+
+<p align="center">
+  A tiny, fast notch for the top of your Windows screen.<br>
+  Hover it for music, a focus timer, your shelf of files and today's tasks.
+</p>
+
+<p align="center">
+  <b>~650 KB</b> single .exe &nbsp;·&nbsp; <b>~0.2 MB</b> RAM when closed &nbsp;·&nbsp; <b>0% CPU</b> at rest &nbsp;·&nbsp; nothing to install
+</p>
+
+---
+
+## Why Perch
+
+Perch lives in the middle of your screen's top edge as a small black pill showing the time and your
+battery. Move the mouse onto it and it springs open into a panel of pages; move away and it tucks
+itself back. It never steals focus, clicks pass straight through around it, and it steps aside for
+full screen games and videos.
+
+It's written in native C++ (Win32 + Direct2D). There's no browser engine, no runtime and no
+background polling: when the notch is closed, Perch is asleep until something actually happens.
+
+## Features
+
+| | |
+|---|---|
+| **The notch** | A pill with the time and a battery ring, joined to the top edge (Classic) or floating just below it. Sizes 100–150%, a *Minimal* tab when nothing is playing, optional frosted *Glass*. Opens and closes with a soft spring. |
+| **Music** | Title, artist and cover art from any app in Windows' media controls (Spotify, browsers, Media Player…), a progress bar, previous / play-pause / next and mute. A mini cover and sound bars on the closed pill. |
+| **Pomodoro** | Four focus sessions with short breaks, then a long break (25 / 5 / 15 min, adjustable). A pop-up and a chime when each part ends; daily focus minutes are kept. |
+| **To-do** | Today's tasks with optional times and daily repeats. Reminders when a task starts and when its time is up, with snooze. |
+| **Calendar** | Month and week views on the To-do page, from your own Google Calendar iCal link. Refreshes every 30 minutes. |
+| **Shelf** | Drop files on the notch to keep them handy, then drag them out into any app later. Survives restarts. |
+| **Pop-ups** | Volume, brightness, output device, battery (charging, low, full), Caps Lock, input language, Wi-Fi and Bluetooth headsets. Each can be turned off. |
+| **Mascot** | Leave the PC alone for 15 seconds and a little friend appears in the notch. It looks around, dozes off and wakes up when you're back. Seven styles: the Falcon, Ember, Mint leaf, Cyclops, Visor bot, Sunny and Moonlight. |
+| **Settings** | A settings window (tray icon, right-click → *Settings…*, or the gear on the page bar). Everything is also in a commented `settings.ini` that applies the moment you save it. |
+
+## Getting started
+
+1. Download `Perch.exe` from the [Releases](../../releases) page.
+2. Run it. The notch appears at the top of your main screen.
+3. Hover to open, scroll to change pages, right-click for the menu.
+4. Turn on *Start with Windows* from the tray icon or the right-click menu, if you like.
+
+Requires Windows 10 (2004 or later) or Windows 11, x64.
+
+### Tips
+
+- **Scroll** over the open notch, or use the ‹ › arrows, to flip pages. Hover the dots for page icons.
+- **Shelf from the command line:** `Perch.exe --shelf "C:\path\file.pdf" "C:\path\photo.png"` adds files to the running copy.
+- **settings.ini:** every option has a comment. Delete a line, or the whole file, to go back to the default.
+
+## Privacy
+
+Perch doesn't send anything anywhere. Its only network request is downloading your calendar, and only
+if you add a calendar link. Everything it keeps stays in `%APPDATA%\Perch`:
+
+| File | What's in it |
+|---|---|
+| `settings.ini` | Your settings |
+| `shelf.txt` | Paths of the files on your shelf (the files aren't copied) |
+| `tasks.txt` | Your to-do list |
+| `calendar.ics` | The last calendar download |
+| `focus.txt` | Pomodoro sessions and focus minutes per day |
+
+*Start with Windows* adds `Perch` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
+
+## Building from source
+
+You need a C++17 compiler: MinGW-w64 (recommended) or Visual Studio Build Tools.
+
+```
+winget install BrechtSanders.WinLibs.POSIX.UCRT
+build.bat
+```
+
+The result is `build\Perch.exe`. Quit a running Perch first, since Windows locks a running `.exe`.
+GitHub Actions builds it on every push, and pushing a tag such as `v0.1.0` publishes a release.
+
+## Tests
+
+Each feature has a PowerShell test in `tests/`. This builds Perch, runs them all and starts a fresh copy:
+
+```
+powershell -STA -ExecutionPolicy Bypass -File tests\run_all.ps1
+```
+
+The tests briefly move and click the mouse and change volume, brightness and mute, then put
+everything back, so run them while you're not using the PC. They use a temporary data folder where
+it matters, and skip rather than click into another app.
+
+## Project layout
+
+| Path | What it is |
+|---|---|
+| `src/notch.cpp` | The app: window, drawing, animation, pages, pop-ups, shelf, tray icon |
+| `src/mascot.cpp` | The mascot's looks, shared by the notch and the settings previews |
+| `src/media.cpp` | Now playing and media controls (Windows media session API) |
+| `src/calendar.cpp` | Calendar download (WinHTTP) and the iCal reader |
+| `src/settings.cpp` | `settings.ini`: defaults, reading, saving and watching for changes |
+| `src/settingsui.cpp` | The settings window |
+| `assets/` | The logo (`perch.svg`) and icon; `make_icon.ps1` rebuilds `perch.ico` |
+| `tests/` | One `test_*.ps1` per feature, shared helpers in `lib.ps1` |
+| `build.bat` | Build script (MinGW or MSVC); output goes to `build/` |
+
+## Known limitations
+
+- The brightness pop-up covers the built-in laptop display only.
+- Wired headphones on a shared jack may not trigger the output-device pop-up.
+- Pop-ups don't show while a full screen app is in front.
+- Some settings say *Coming soon*: lyrics, widgets, water reminders and a few more are on the way.
+
+## Contributing
+
+Bug reports, ideas and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) has the build,
+test and pull request commands.
+
+```
+git clone https://github.com/Karthikjl/perch.git
+cd perch
+build.bat
+```
+
+## License
+
+[MIT](LICENSE)

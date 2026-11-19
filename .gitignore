@@ -1,0 +1,22 @@
+# Build output (rebuild with build.bat)
+build/
+*.exe
+*.obj
+*.o
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.res
+
+# Test output (screenshots can capture whatever is on your screen)
+tests/screenshots/
+*.out
+*.err
+
+# Editor / OS clutter
+.vs/
+.vscode/
+*.swp
+Thumbs.db
+desktop.ini

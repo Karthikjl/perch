@@ -1,0 +1,28 @@
+// App icon (Explorer, taskbar, settings window). Regenerate with assets\make_icon.ps1.
+// The path is relative to the project folder (build.bat adds it to the include path).
+1 ICON "assets/perch.ico"
+
+// Name shown in Task Manager and the exe's Properties.
+1 VERSIONINFO
+FILEVERSION 0,1,0,0
+PRODUCTVERSION 0,1,0,0
+FILEOS 0x40004
+FILETYPE 0x1
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "FileDescription", "Perch"
+      VALUE "ProductName", "Perch"
+      VALUE "InternalName", "Perch"
+      VALUE "OriginalFilename", "Perch.exe"
+      VALUE "FileVersion", "0.1.0"
+      VALUE "ProductVersion", "0.1.0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

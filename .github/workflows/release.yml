@@ -1,0 +1,42 @@
+# Publishes a GitHub release when a version tag (v0.1.0, v0.2.0, ...) is pushed:
+# builds Perch.exe and attaches it. The release text is the tag's message.
+#   git tag -a v0.1.0 -F notes.txt && git push origin v0.1.0
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the tag's message is needed for the release text
+
+      - name: Find MinGW
+        shell: pwsh
+        run: |
+          if (-not (Get-Command g++ -ErrorAction SilentlyContinue)) {
+            if (Test-Path C:\mingw64\bin\g++.exe) { 'C:\mingw64\bin' >> $env:GITHUB_PATH }
+            else { choco install mingw -y --no-progress; 'C:\ProgramData\mingw64\mingw64\bin' >> $env:GITHUB_PATH }
+          }
+
+      - name: Build Perch.exe
+        shell: cmd
+        run: |
+          g++ --version
+          build.bat
+
+      - name: Create the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ github.ref_name }}'
+          git fetch --force origin "refs/tags/${tag}:refs/tags/${tag}"
+          gh release create $tag build/Perch.exe --title "Perch $tag" --notes-from-tag
