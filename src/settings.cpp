@@ -89,6 +89,8 @@ const wchar_t* kDefaultFile =
     L"; WeekStart: Sunday or Monday. View: Month or Week (what the calendar opens on).\r\n"
     L"WeekStart=Sunday\r\n"
     L"View=Month\r\n"
+    L"; Remind: a pop-up before each timed event today: Off, 0 (at the start), 5, 10, 15 or 30 minutes before.\r\n"
+    L"Remind=10\r\n"
     L"\r\n"
     L"[Appearance]\r\n"
     L"; HideInFullScreen: 1 steps aside for games, videos and slides that fill the screen.\r\n"
@@ -260,6 +262,13 @@ std::wstring Settings_Load(const std::wstring& file, Settings& s) {
     int ws = 0, view = 0;
     ReadChoice(file, L"Calendar", L"WeekStart", {L"Sunday", L"Monday"}, ws, problem);
     ReadChoice(file, L"Calendar", L"View", {L"Month", L"Week"}, view, problem);
+    {
+        static const int mins[] = {-1, 0, 5, 10, 15, 30};
+        int r = 3;
+        for (int i = 0; i < 6; i++) if (mins[i] == s.calRemind) r = i;
+        ReadChoice(file, L"Calendar", L"Remind", {L"Off", L"0", L"5", L"10", L"15", L"30"}, r, problem);
+        s.calRemind = mins[r];
+    }
     s.weekMonday = ws == 1;
     s.calWeek = view == 1;
     ReadBool(file, L"Appearance", L"HideInFullScreen", s.hideFullscreen, problem);
@@ -328,6 +337,7 @@ void Settings_Save(const std::wstring& file, const Settings& s) {
     WritePrivateProfileStringW(L"Calendar", L"Link", s.calLink.c_str(), f);
     WritePrivateProfileStringW(L"Calendar", L"WeekStart", s.weekMonday ? L"Monday" : L"Sunday", f);
     WritePrivateProfileStringW(L"Calendar", L"View", s.calWeek ? L"Week" : L"Month", f);
+    WritePrivateProfileStringW(L"Calendar", L"Remind", s.calRemind < 0 ? L"Off" : std::to_wstring(s.calRemind).c_str(), f);
     WritePrivateProfileStringW(L"Appearance", L"HideInFullScreen", s.hideFullscreen ? L"1" : L"0", f);
     WritePrivateProfileStringW(L"Appearance", L"Open", s.openClick ? L"Click" : L"Hover", f);
     WritePrivateProfileStringW(L"Appearance", L"PageIcons", s.pageIcons ? L"1" : L"0", f);

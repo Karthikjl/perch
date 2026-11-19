@@ -69,6 +69,7 @@ enum Id {
     G_PETSTYLE, // arg = mascot style
     W_REMIND, W_GOAL, W_CUP, W_FROM, W_UNTIL,
     C_HISTORY, C_MAX, C_REMEMBER,
+    T_REMIND,
     I_SOON, // a Coming soon control (never hit)
 };
 
@@ -198,6 +199,7 @@ int GetChoice(int id) {
     case T_VIEW: return g_s.calWeek ? 1 : 0;
     case D_RING: return g_s.ring == RING_BATTERY ? 0 : g_s.ring == RING_WATER ? 1 : g_s.ring == RING_TASKS ? 2 : 3;
     case W_GOAL: return (g_s.waterGoal - 1500) / 500;
+    case T_REMIND: { static const int m[] = {-1, 0, 5, 10, 15, 30}; for (int i = 0; i < 6; i++) if (m[i] == g_s.calRemind) return i; return 3; }
     case A_STYLE: return g_s.style;
     case G_PETSTYLE: return g_s.mascotStyle;
     }
@@ -214,6 +216,7 @@ void SetChoice(int id, int v) {
     case T_VIEW: g_s.calWeek = v == 1; break;
     case D_RING: g_s.ring = v == 0 ? RING_BATTERY : v == 1 ? RING_WATER : v == 2 ? RING_TASKS : RING_NONE; break;
     case W_GOAL: g_s.waterGoal = 1500 + 500 * v; break;
+    case T_REMIND: { static const int m[] = {-1, 0, 5, 10, 15, 30}; g_s.calRemind = m[v < 0 ? 0 : v > 5 ? 5 : v]; break; }
     case A_STYLE: g_s.style = v; break;
     default: return;
     }
@@ -645,7 +648,8 @@ void BuildTodo() {
           {RK_SEG, L"Snooze for", nullptr, T_SNOOZE, false, {L"5 min", L"10 min", L"15 min"}, {}}});
     Label(L"Calendar options");
     Card({{RK_SEG, L"Week starts on", nullptr, T_WEEK, false, {L"Sunday", L"Monday"}, {}},
-          {RK_SEG, L"Default view", nullptr, T_VIEW, false, {L"Month", L"Week"}, {}}});
+          {RK_SEG, L"Default view", nullptr, T_VIEW, false, {L"Month", L"Week"}, {}},
+          {RK_SEGWIDE, L"Event reminders", L"A pop-up before each timed event today", T_REMIND, false, {L"Off", L"At start", L"5 min", L"10 min", L"15 min", L"30 min"}, {}}});
     Label(L"Google Calendar");
     wchar_t status[128] = L"Not connected";
     if (g_host.calStatus) g_host.calStatus(status, 128);
@@ -866,7 +870,7 @@ void Activate(const Hit& h) {
     case P_UP: MovePage(h.arg, -1); break;
     case P_DOWN: MovePage(h.arg, 1); break;
     case P_TOGGLE: MovePage(h.arg, 0); break;
-    case G_SIZE: case A_OPEN: case A_SPEED: case T_SNOOZE: case T_WEEK: case T_VIEW: case D_RING: case A_STYLE: case G_PETSTYLE: case W_GOAL: SetChoice(h.id, h.arg); break;
+    case G_SIZE: case A_OPEN: case A_SPEED: case T_SNOOZE: case T_WEEK: case T_VIEW: case D_RING: case A_STYLE: case G_PETSTYLE: case W_GOAL: case T_REMIND: SetChoice(h.id, h.arg); break;
     case A_TINT: case O_FOCUS: case O_SHORT: case O_LONG: case W_CUP: case W_FROM: case W_UNTIL: case C_MAX: Step(h.id, h.arg); break;
     case T_PASTE: if (g_host.calPaste) g_host.calPaste(); break;
     case T_REFRESH: if (g_host.calRefresh) g_host.calRefresh(); break;

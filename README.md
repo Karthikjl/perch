@@ -34,7 +34,7 @@ background polling: when the notch is closed, Perch is asleep until something ac
 | **Pomodoro** | Four focus sessions with short breaks, then a long break (25 / 5 / 15 min, adjustable). A pop-up and a chime when each part ends; daily focus minutes are kept. |
 | **To-do** | Today's tasks with optional times and daily repeats. Reminders when a task starts and when its time is up, with snooze. |
 | **Water** | Tap + for each cup and watch today's total fill up toward your goal (1.5–3 L). Optional reminders spread across your active hours nudge you only when you're behind; *Drank* or *Later* right on the pop-up. A Water ring for the closed notch, too. |
-| **Calendar** | Month and week views on the To-do page, from your own Google Calendar iCal link. Refreshes every 30 minutes. |
+| **Calendar** | Month and week views on the To-do page, from your own Google Calendar iCal link. Refreshes every 30 minutes. A pop-up before each timed event today (10 min before by default, or at the start, 5, 15 or 30 min, or off), with *Later* and *OK*. |
 | **Shelf** | Drop files on the notch to keep them handy, then drag them out into any app later. Survives restarts. |
 | **Clipboard history** | Turn it on and the Shelf gets a Clipboard tab with the text you copy, newest first: click one to copy it again. Copies that password managers mark as private are skipped. Optionally kept after a restart, encrypted for your Windows account. Off by default. |
 | **Pop-ups** | Volume, brightness, output device, battery (charging, low, full), Caps Lock, input language, Wi-Fi and Bluetooth headsets. Each can be turned off. |

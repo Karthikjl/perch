@@ -127,7 +127,8 @@ enum {
     WM_APP_TODO = WM_APP + 27,          // tests: wp 0 = tasks | done << 8 | editor << 16 | reminder kind << 20 | edit mode << 24;
                                         //        1 = check reminders as if the time were lp (minutes since midnight); 2 = reminders waiting
     WM_APP_PET = WM_APP + 28,           // tests: wp 0 = mascot mode | percent shown << 4; 1 = appear now as if away 15 s (returns 1 if it did)
-    WM_APP_CAL = WM_APP + 29,           // tests: wp 0 = status | events << 4; 1 = items on day today + lp; 2 = open | week << 1 |
+    WM_APP_CAL = WM_APP + 29,           // tests: wp 5 = event reminder check as if the minute were lp (1 if its pop-up shows); 6 = next due minute
+                                        //        wp 0 = status | events << 4; 1 = items on day today + lp; 2 = open | week << 1 |
                                         //        (selected day - today + 1000) << 4; 3 = download again; 4 = month shown (y * 100 + m)
     WM_APP_CAL_DONE = WM_APP + 30,      // calendar download finished: lp = CalJob*
     WM_APP_TRAY = WM_APP + 31,          // the tray icon was clicked
@@ -143,7 +144,8 @@ enum { TIMER_ANIM = 1, TIMER_CLOCK = 2, TIMER_FLASH = 3, TIMER_SETTINGS = 6, TIM
        TIMER_CAL = 14,                           // calendar: download again
        TIMER_PEEK = 15,                          // hover: open after the peek
        TIMER_WATER = 16,                         // water: the next reminder (or midnight)
-       TIMER_CLIP = 17 };                        // clipboard: "Copied" goes                       // water: the next reminder (or midnight)                        // hover: open after the peek
+       TIMER_CLIP = 17,                          // clipboard: "Copied" goes
+       TIMER_CALREM = 18 };                      // calendar: the next event reminder                        // clipboard: "Copied" goes                       // water: the next reminder (or midnight)                        // hover: open after the peek
 enum { CMD_QUIT = 100, CMD_AUTOSTART = 101,
        CMD_MEDIA_PLAYPAUSE = 104, CMD_MEDIA_NEXT = 105, CMD_MEDIA_PREV = 106, CMD_SHELF_CLEAR = 107,
        CMD_SETTINGS = 109, CMD_POMO_TOGGLE = 110, CMD_POMO_RESET = 111,
@@ -1847,7 +1849,7 @@ static int g_edit = 0;                 // editor: 0 closed, 1 new task, 2 editin
 static int g_editIdx = -1, g_editField = 0; // 0 title, 1 time
 static std::wstring g_editTitle, g_editTime; // time: up to 8 digits, HHMMHHMM
 static bool g_editDaily = false, g_editBadTitle = false, g_editBadTime = false;
-struct Reminder { int task; int kind; }; // kind 1 = Task Time!, 2 = Time's Up!, 3 = water (task -1)
+struct Reminder { int task; int kind; }; // kind 1 = Task Time!, 2 = Time's Up!, 3 = water (task -1), 4 = calendar event (task: g_calRemList)
 static std::vector<Reminder> g_remQueue;
 static Reminder g_rem = {-1, 0};          // the one showing
 
@@ -2021,6 +2023,61 @@ static void UiWaterStatus(wchar_t* out, int n) {
     swprintf(out, n, L"%ls of %ls", a, g);
 }
 
+// ---- Calendar event reminders ----
+// A pop-up a few minutes before each timed event of today ([Calendar] Remind: minutes before, 0 = at the
+// start, -1 = off). One SetTimer for the next one; events already reminded are remembered for the day.
+static std::vector<CalEvent> g_calRemList;  // events whose pop-up was queued (a Reminder's task is an index here)
+static std::vector<std::wstring> g_calRemDone; // "day:start:title" of events already reminded
+static std::vector<std::pair<CalEvent, int>> g_calLater; // "Later": event, minute to remind again
+static const D2D1_COLOR_F kCalOrange = {1.0f, 0.62f, 0.04f, 1}; // #FF9F0A
+static std::wstring CalRemKey(const CalEvent& e) { return std::to_wstring(e.day) + L":" + std::to_wstring(e.start) + L":" + e.title; }
+static bool CalReminded(const CalEvent& e) { return std::find(g_calRemDone.begin(), g_calRemDone.end(), CalRemKey(e)) != g_calRemDone.end(); }
+static int CalRemNextDue(int now) { // next minute a calendar pop-up is due, or -1
+    int next = -1, today = Cal_Today();
+    auto take = [&](int t) { if (t > now && (next < 0 || t < next)) next = t; };
+    for (auto& l : g_calLater) take(l.second);
+    if (g_set.calRemind < 0) return next;
+    for (const CalEvent& e : g_calEvents)
+        if (e.day == today && e.start >= 0 && !CalReminded(e)) take(std::max(0, e.start - g_set.calRemind));
+    return next;
+}
+static void ArmCalRemTimer() {
+    if (!g_hwnd) return;
+    int now = NowMinute(), due = CalRemNextDue(now);
+    if (due < 0) due = 24 * 60; // midnight: a new day's events
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    long long ms = (long long)(due - now) * 60000 - st.wSecond * 1000 - st.wMilliseconds + 300;
+    SetTimer(g_hwnd, TIMER_CALREM, (UINT)std::max(1000LL, ms), nullptr);
+}
+static void ShowNextReminder();
+static void CheckCalReminders(int now) {
+    int today = Cal_Today();
+    if (!g_calRemDone.empty() && g_calRemDone.front().compare(0, std::to_wstring(today).size(), std::to_wstring(today)) != 0)
+        g_calRemDone.clear(); // a new day
+    bool queued = false;
+    auto queue = [&](const CalEvent& e) { g_calRemList.push_back(e); g_remQueue.push_back({(int)g_calRemList.size() - 1, 4}); queued = true; };
+    for (size_t i = 0; i < g_calLater.size();)
+        if (g_calLater[i].second <= now) { if (now < std::max(g_calLater[i].first.end, g_calLater[i].first.start + 1)) queue(g_calLater[i].first); g_calLater.erase(g_calLater.begin() + i); }
+        else i++;
+    if (g_set.calRemind >= 0)
+        for (const CalEvent& e : g_calEvents) {
+            if (e.day != today || e.start < 0 || CalReminded(e)) continue;
+            int due = std::max(0, e.start - g_set.calRemind);
+            if (now < due) continue;
+            g_calRemDone.push_back(CalRemKey(e));
+            if (now <= e.start + 5) queue(e); // not for events long started (the PC was off)
+        }
+    if (queued && !g_act) ShowNextReminder();
+    ArmCalRemTimer();
+}
+static void CalRemText(const CalEvent& e, wchar_t* title, wchar_t* sub, int n) {
+    int left = e.start - NowMinute();
+    if (left > 0) swprintf(title, n, L"In %d min", left);
+    else wcscpy(title, L"Starting now");
+    swprintf(sub, n, L"%02d:%02d \x00B7 %ls", e.start / 60, e.start % 60, e.title.c_str());
+}
+
 // ---- reminders ----
 static void ArmTodoTimer() {
     if (g_tasks.empty()) { KillTimer(g_hwnd, TIMER_TODO); return; }
@@ -2068,7 +2125,8 @@ static void ShowNextReminder() {
     while (!g_remQueue.empty()) {
         Reminder r = g_remQueue.front();
         g_remQueue.erase(g_remQueue.begin());
-        if (r.kind == 3 ? WaterToday() >= g_set.waterGoal : r.task < 0 || r.task >= (int)g_tasks.size() || TaskDone(g_tasks[r.task], today)) continue;
+        if (r.kind == 4 ? r.task < 0 || r.task >= (int)g_calRemList.size()
+            : r.kind == 3 ? WaterToday() >= g_set.waterGoal : r.task < 0 || r.task >= (int)g_tasks.size() || TaskDone(g_tasks[r.task], today)) continue;
         g_rem = r;
         g_act = true;
         g_toast = true;
@@ -2076,6 +2134,7 @@ static void ShowNextReminder() {
         KillTimer(g_hwnd, TIMER_FLASH);
         wchar_t text[200];
         if (r.kind == 3) { wchar_t s[64]; UiWaterStatus(s, 64); swprintf(text, 200, L"Time for water | %ls so far", s); }
+        else if (r.kind == 4) { wchar_t t[96], s[96]; CalRemText(g_calRemList[r.task], t, s, 96); swprintf(text, 200, L"%ls | %ls", t, s); }
         else swprintf(text, 200, L"%ls | %ls", r.kind == 1 ? L"Task Time!" : L"Time's Up!", g_tasks[r.task].title.c_str());
         text[199] = 0;
         if (g_toastAtom) GlobalDeleteAtom(g_toastAtom);
@@ -2092,7 +2151,9 @@ static void ShowNextReminder() {
 
 static void AnswerReminder(bool second) { // the pop-up's buttons: Later / Start, +N min / Done
     int today = TodayStamp(), now = NowMinute();
-    if (g_rem.kind == 3) { // water: Later / Drank
+    if (g_rem.kind == 4) { // calendar event: Later (again in N min) / OK
+        if (!second && g_rem.task >= 0 && g_rem.task < (int)g_calRemList.size()) { g_calLater.push_back({g_calRemList[g_rem.task], now + g_set.snooze}); ArmCalRemTimer(); }
+    } else if (g_rem.kind == 3) { // water: Later / Drank
         if (second) WaterAdd(g_set.waterCup);
         else { g_waterLater = now + g_set.snooze; ArmWaterTimer(); }
     } else if (g_rem.task >= 0 && g_rem.task < (int)g_tasks.size()) {
@@ -2118,7 +2179,7 @@ static void ActButtons(const wchar_t** a, const wchar_t** b) {
     static wchar_t more[16];
     swprintf(more, 16, L"+%d min", g_set.snooze);
     *a = g_rem.kind == 2 ? more : L"Later";
-    *b = g_rem.kind == 1 ? L"Start" : g_rem.kind == 3 ? L"Drank" : L"Done";
+    *b = g_rem.kind == 1 ? L"Start" : g_rem.kind == 3 ? L"Drank" : g_rem.kind == 4 ? L"OK" : L"Done";
 }
 static D2D1_RECT_F ActButtonRect(bool second) {
     const wchar_t *a, *b;
@@ -2137,11 +2198,12 @@ static void DrawClipboardCheck(D2D1_POINT_2F c, D2D1_COLOR_F col) { // the task 
 }
 static void DrawPageIcon(int page, D2D1_POINT_2F c, D2D1_COLOR_F col);
 static void DrawActToast(float a) {
-    bool water = g_rem.kind == 3;
-    if (!water && (g_rem.task < 0 || g_rem.task >= (int)g_tasks.size())) return;
+    bool water = g_rem.kind == 3, cal = g_rem.kind == 4;
+    if (cal && (g_rem.task < 0 || g_rem.task >= (int)g_calRemList.size())) return;
+    if (!water && !cal && (g_rem.task < 0 || g_rem.task >= (int)g_tasks.size())) return;
     float ax = (kWinW - kActW) / 2;
     D2D1_POINT_2F ic = D2D1::Point2F(ax + 40, 30);
-    g_brush->SetColor(WithAlpha(water ? kWaterBlue : kTodoGreen, 0.3f * a));
+    g_brush->SetColor(WithAlpha(cal ? kCalOrange : water ? kWaterBlue : kTodoGreen, 0.3f * a));
     g_rt->DrawEllipse(D2D1::Ellipse(ic, 25.5f, 25.5f), g_brush, 2.4f);
     if (water) {
         D2D1_MATRIX_3X2_F old;
@@ -2149,21 +2211,23 @@ static void DrawActToast(float a) {
         g_rt->SetTransform(D2D1::Matrix3x2F::Scale(1.6f, 1.6f, ic) * old);
         DrawPageIcon(PAGE_WATER, ic, WithAlpha(g_fg, a));
         g_rt->SetTransform(old);
-    } else DrawClipboardCheck(ic, WithAlpha(g_fg, a));
-    wchar_t sub[64];
+    } else if (cal) Text(L"\xE787", g_fmtIcon, D2D1::RectF(ic.x - 14, ic.y - 14, ic.x + 14, ic.y + 14), WithAlpha(g_fg, a)); // Calendar
+    else DrawClipboardCheck(ic, WithAlpha(g_fg, a));
+    wchar_t sub[96], calTitle[96];
     if (water) { UiWaterStatus(sub, 64); wcscat(sub, L" so far"); }
+    if (cal) CalRemText(g_calRemList[g_rem.task], calTitle, sub, 96);
     const wchar_t *ta, *tb;
     ActButtons(&ta, &tb);
     D2D1_RECT_F ra = ActButtonRect(false), rb = ActButtonRect(true);
     float textR = ra.left - 8;
-    Text(water ? L"Time for water" : g_rem.kind == 1 ? L"Task Time!" : L"Time's Up!", g_fmtActTitle, D2D1::RectF(ax + 76, 13, textR, 33), WithAlpha(g_fg, a));
-    Text(water ? sub : g_tasks[g_rem.task].title.c_str(), g_fmtActSub, D2D1::RectF(ax + 76, 33, textR, 47), WithAlpha(g_grey, a));
+    Text(cal ? calTitle : water ? L"Time for water" : g_rem.kind == 1 ? L"Task Time!" : L"Time's Up!", g_fmtActTitle, D2D1::RectF(ax + 76, 13, textR, 33), WithAlpha(g_fg, a));
+    Text(water || cal ? sub : g_tasks[g_rem.task].title.c_str(), g_fmtActSub, D2D1::RectF(ax + 76, 33, textR, 47), WithAlpha(g_grey, a));
     g_brush->SetColor(Rgb(0x262629, a * (g_hot == HOT_ACT_A ? 1.25f : 1)));
     g_rt->FillRoundedRectangle(D2D1::RoundedRect(ra, 14, 14), g_brush);
     Text(ta, g_fmtActBtn, ra, WithAlpha(g_fg, a));
-    g_brush->SetColor(Rgb(water ? (g_hot == HOT_ACT_B ? 0x15426E : 0x0D2E4F) : (g_hot == HOT_ACT_B ? 0x0A5A26 : 0x054019), a));
+    g_brush->SetColor(Rgb(cal ? (g_hot == HOT_ACT_B ? 0x5C3A05 : 0x3D2603) : water ? (g_hot == HOT_ACT_B ? 0x15426E : 0x0D2E4F) : (g_hot == HOT_ACT_B ? 0x0A5A26 : 0x054019), a));
     g_rt->FillRoundedRectangle(D2D1::RoundedRect(rb, 14, 14), g_brush);
-    Text(tb, g_fmtActBtn, rb, Rgb(water ? 0x4CADFF : 0x30FF5C, a));
+    Text(tb, g_fmtActBtn, rb, Rgb(cal ? 0xFF9F0A : water ? 0x4CADFF : 0x30FF5C, a));
 }
 
 // ---- page layout (DIPs from the open pill's left edge) ----
@@ -3616,6 +3680,7 @@ static bool CalLoad(const std::string& ics) {
     int today = Cal_Today();
     if (!Cal_Parse(ics, today - 400, today + 400, ev)) return false;
     g_calEvents.swap(ev);
+    ArmCalRemTimer();
     return true;
 }
 static void CalLinkChanged(bool announce) { // settings loaded: a new (or no) link starts over
@@ -3658,7 +3723,7 @@ static void ApplySettings(bool announce, bool quiet = false) {
         CreateSurface();
     }
     ArmMinuteTimer();
-    if (g_hwnd) { ArmWaterTimer(); ClipListen(); }
+    if (g_hwnd) { ArmWaterTimer(); ClipListen(); ArmCalRemTimer(); }
     UpdateKeyboardHook();
     SetGlassColours(g_set.glass);
     SetBlur(g_set.glass);
@@ -4178,6 +4243,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         else if (wp == TIMER_CLOCK) { if (!g_hidden) Render(); }
         else if (wp == TIMER_TODO) { KillTimer(hwnd, TIMER_TODO); CheckTaskReminders(NowMinute()); if (!g_hidden) Render(); }
         else if (wp == TIMER_CLIP) { KillTimer(hwnd, TIMER_CLIP); g_clipCopied = -1; if (!g_hidden) Render(); }
+        else if (wp == TIMER_CALREM) { KillTimer(hwnd, TIMER_CALREM); CheckCalReminders(NowMinute()); if (!g_hidden) Render(); }
         else if (wp == TIMER_WATER) { KillTimer(hwnd, TIMER_WATER); OnWaterTimer(); if (!g_hidden) Render(); }
         else if (wp == TIMER_POMO) {
             if (PomoLeftMs() > 0) PomoArm(); // fired a little early: wait for the rest
@@ -4320,6 +4386,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == 2) return (g_todoCal ? 1 : 0) | (g_calWeekView ? 2 : 0) | ((g_calSel - today + 1000) << 4);
         if (wp == 3) { CalFetch(false); return 0; }
         if (wp == 4) { int y, m, d; Cal_Date(g_calWeekView ? CalWeekStart(g_calAnchor) : g_calAnchor, y, m, d); return y * 100 + m; }
+        if (wp == 5) { g_testMinute = (int)lp; CheckCalReminders(NowMinute()); if (!g_hidden) Render(); return g_act && g_rem.kind == 4 ? 1 : 0; }
+        if (wp == 6) return CalRemNextDue(NowMinute());
         return g_calStatus | (std::min((int)g_calEvents.size(), 0xFFFF) << 4);
     }
     case WM_INPUT: // mouse or keyboard anywhere: wake the mascot
@@ -4354,6 +4422,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         ArmMinuteTimer();
         CheckTaskReminders(NowMinute());
         ArmWaterTimer();
+        CheckCalReminders(NowMinute());
         if (!g_hidden) Render();
         return 0;
     case WM_DPICHANGED:

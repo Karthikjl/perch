@@ -28,7 +28,8 @@ struct Settings {
     int snooze = 10;                                  // "Snooze for": 5, 10 or 15 minutes
     std::wstring calLink;                             // Google Calendar: secret address in iCal format. [Calendar] Link
     bool weekMonday = false;                          // "Week starts on": Sunday / Monday
-    bool calWeek = false;                             // "Default view": Month / Week
+    bool calWeek = false;
+    int calRemind = 10;                               // [Calendar] Remind: minutes before an event, 0 = at its start, -1 = off                             // "Default view": Month / Week
     // Appearance and General extras
     bool hideFullscreen = true;  // "Hide in full screen"
     bool openClick = false;      // "Open the notch": Hover / Click

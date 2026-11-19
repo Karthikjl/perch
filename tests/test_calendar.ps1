@@ -162,6 +162,24 @@ try {
     Assert ($bad.Count -eq 0) "items on each day from -20 to +30: weekly with a skipped date, moved repeat, UTC, last Friday, all-day, cancelled, daily task ($($bad -join '; '))"
     Assert (Test-Path (Join-Path $work 'calendar.ics')) 'the download is kept for next time (calendar.ics)'
 
+    # --- event reminders (Remind=10, the default): today has Weekly review 09:00, Standup 10:00, Gym 18:00 ---
+    function Answer([int]$hot) { Wait-Until { Test-Flag Expanded } 2000 | Out-Null; Start-Sleep -Milliseconds 300; Tap $hot; Wait-Until { -not (Test-Flag Toast) } 3000 | Out-Null }
+    Assert ((Cal 5 500) -eq 0 -and (Cal 6) -eq 530) "at 08:20 nothing yet; the first reminder is due at 08:50 ($(Cal 6))"
+    Assert ((Cal 5 531) -eq 1) 'at 08:51 a pop-up for Weekly review'
+    Assert ((Get-ToastText) -eq "In 9 min | 09:00 $([char]0xB7) Weekly review") "pop-up: $(Get-ToastText)"
+    Answer 52
+    Assert ((Cal 6) -eq 590) "OK closes it; the next is due at 09:50 ($(Cal 6))"
+    Assert ((Cal 5 592) -eq 1 -and (Get-ToastText) -like 'In 8 min | 10:00*Standup') "at 09:52: $(Get-ToastText)"
+    Answer 51
+    Assert ((Cal 6) -eq 602) "Later asks again 10 min later ($(Cal 6))"
+    Assert ((Cal 5 602) -eq 1 -and (Get-ToastText) -like 'Starting now | 10:00*Standup') "at 10:02: $(Get-ToastText)"
+    Answer 52
+    Assert ((Cal 5 700) -eq 0) 'no pop-up again for events already shown'
+    Set-Content -LiteralPath $ini -Value '[Calendar]', "Link=$url", 'Remind=Off' -Encoding ASCII
+    Wait-Until { (Cal 6) -eq -1 } 3000 | Out-Null
+    Assert ((Cal 6) -eq -1) 'Remind=Off: no event reminders'
+    Wait-Until { -not (Test-Flag Toast) } 7000 | Out-Null
+
     # --- the calendar view ---
     [NotchTest]::SendMessage((Get-NotchWindow), [NotchTest]::WM_APP + 19, [IntPtr]3, [IntPtr]::Zero) | Out-Null # To-do page
     if (Wait-Until { Hover-Notch; Test-Flag Expanded } 3000) {
