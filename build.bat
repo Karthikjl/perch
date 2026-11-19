@@ -3,7 +3,7 @@ rem Builds build\Perch.exe from src\. Prefers MinGW (WinLibs via winget), falls 
 setlocal
 cd /d "%~dp0"
 if not exist build mkdir build
-set SOURCES=src\notch.cpp src\media.cpp src\settings.cpp src\settingsui.cpp src\calendar.cpp src\mascot.cpp
+set SOURCES=src\notch.cpp src\media.cpp src\settings.cpp src\settingsui.cpp src\calendar.cpp src\mascot.cpp src\ask.cpp
 
 set "MINGW=%LOCALAPPDATA%\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\mingw64"
 rem Else a MinGW g++ on PATH (e.g. GitHub's Windows runners).

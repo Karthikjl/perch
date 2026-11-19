@@ -73,6 +73,13 @@ const wchar_t* kDefaultFile =
     L"From=08:00\r\n"
     L"Until=17:00\r\n"
     L"\r\n"
+    L"[Ask]\r\n"
+    L"; Ask Perch sends your questions to Google's Gemini with your own key (Settings > Ask Perch > Paste key;\r\n"
+    L"; the key is stored encrypted in ask.key, not here). Model: the Gemini model to use, as Google names it.\r\n"
+    L"; Hotkey: 1 opens Ask Perch from anywhere with Ctrl + Alt + Space.\r\n"
+    L"Model=gemini-flash-latest\r\n"
+    L"Hotkey=1\r\n"
+    L"\r\n"
     L"[Clipboard]\r\n"
     L"; History: 1 keeps the text you copy in the Shelf's Clipboard tab. Copies that password managers\r\n"
     L"; mark as private are skipped. Max: how many to keep (5-50).\r\n"
@@ -234,6 +241,17 @@ std::wstring Settings_Load(const std::wstring& file, Settings& s) {
     ReadChoice(file, L"Notch", L"MascotStyle", {kMascotKeys[0], kMascotKeys[1], kMascotKeys[2], kMascotKeys[3], kMascotKeys[4],
                kMascotKeys[5], kMascotKeys[6]}, s.mascotStyle, problem);
     for (const PopupKey& k : kPopups) ReadBool(file, L"Popups", k.key, s.*(k.field), problem);
+    {
+        bool present;
+        std::wstring m = Read(file, L"Ask", L"Model", present);
+        while (!m.empty() && iswspace(m.back())) m.pop_back();
+        while (!m.empty() && iswspace(m.front())) m.erase(m.begin());
+        bool ok = !m.empty() && m.size() < 100;
+        for (wchar_t c : m) ok = ok && (iswalnum(c) || c == L'-' || c == L'.' || c == L'_');
+        if (present && ok) s.askModel = m;
+        else if (present && problem.empty()) problem = L"Ask: Model should be a Gemini model name like gemini-flash-latest";
+    }
+    ReadBool(file, L"Ask", L"Hotkey", s.askHotkey, problem);
     ReadBool(file, L"Clipboard", L"History", s.clipHistory, problem);
     ReadInt(file, L"Clipboard", L"Max", 5, 50, s.clipMax, problem);
     ReadBool(file, L"Clipboard", L"Remember", s.clipRemember, problem);
@@ -317,6 +335,8 @@ void Settings_Save(const std::wstring& file, const Settings& s) {
     WritePrivateProfileStringW(L"Pomodoro", L"Focus", std::to_wstring(s.pomoFocus).c_str(), f);
     WritePrivateProfileStringW(L"Pomodoro", L"ShortBreak", std::to_wstring(s.pomoShort).c_str(), f);
     WritePrivateProfileStringW(L"Pomodoro", L"LongBreak", std::to_wstring(s.pomoLong).c_str(), f);
+    WritePrivateProfileStringW(L"Ask", L"Model", s.askModel.c_str(), f);
+    WritePrivateProfileStringW(L"Ask", L"Hotkey", s.askHotkey ? L"1" : L"0", f);
     WritePrivateProfileStringW(L"Clipboard", L"History", s.clipHistory ? L"1" : L"0", f);
     WritePrivateProfileStringW(L"Clipboard", L"Max", std::to_wstring(s.clipMax).c_str(), f);
     WritePrivateProfileStringW(L"Clipboard", L"Remember", s.clipRemember ? L"1" : L"0", f);

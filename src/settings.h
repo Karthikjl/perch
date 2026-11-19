@@ -43,6 +43,8 @@ struct Settings {
     int waterFrom = 8 * 60, waterUntil = 17 * 60; // From / Until, minutes since midnight
     bool shelfEmpty = false;
     // Clipboard history in the Shelf. [Clipboard]
+    std::wstring askModel = L"gemini-flash-latest"; // [Ask] Model: the Gemini model questions go to (picked in Settings)
+    bool askHotkey = true;                        // [Ask] Hotkey: Ctrl + Alt + Space opens Ask Perch
     bool clipHistory = false;    // History: keep the text you copy
     int clipMax = 20;            // Max: items kept, 5-50
     bool clipRemember = false;   // Remember: keep them after a restart (encrypted for this Windows account)     // Shelf: "Empty shelf at start"

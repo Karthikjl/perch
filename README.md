@@ -37,6 +37,7 @@ background polling: when the notch is closed, Perch is asleep until something ac
 | **Calendar** | Month and week views on the To-do page, from your own Google Calendar iCal link. Refreshes every 30 minutes. A pop-up before each timed event today (10 min before by default, or at the start, 5, 15 or 30 min, or off), with *Later* and *OK*. |
 | **Shelf** | Drop files on the notch to keep them handy, then drag them out into any app later. Survives restarts. |
 | **Clipboard history** | Turn it on and the Shelf gets a Clipboard tab with the text you copy, newest first: click one to copy it again. Copies that password managers mark as private are skipped. Optionally kept after a restart, encrypted for your Windows account. Off by default. |
+| **Ask Perch** | Press **Ctrl + Alt + Space** anywhere, type a question, press Enter: the answer appears right in the notch (Esc closes, *Copy answer* copies it). Uses Google's Gemini with your own free key from aistudio.google.com, and the model you pick in Settings from the ones your key can use. The key is stored encrypted for your Windows account. |
 | **Pop-ups** | Volume, brightness, output device, battery (charging, low, full), Caps Lock, input language, Wi-Fi and Bluetooth headsets. Each can be turned off. |
 | **Mascot** | Leave the PC alone for 15 seconds and a little friend appears in the notch. It looks around, dozes off and wakes up when you're back. Seven styles: the Falcon, Ember, Mint leaf, Cyclops, Visor bot, Sunny and Moonlight. |
 | **Settings** | A settings window (tray icon, right-click → *Settings…*, or the gear on the page bar). Everything is also in a commented `settings.ini` that applies the moment you save it. |
@@ -58,8 +59,9 @@ Requires Windows 10 (2004 or later) or Windows 11, x64.
 
 ## Privacy
 
-Perch doesn't send anything anywhere. Its only network request is downloading your calendar, and only
-if you add a calendar link. Everything it keeps stays in `%APPDATA%\Perch`:
+Perch doesn't send anything anywhere unless you ask it to. It downloads your calendar only if you add a
+calendar link, and sends your Ask Perch questions to Google only if you add your own Gemini key (to the
+model you choose, using that key). Everything it keeps stays in `%APPDATA%\Perch`:
 
 | File | What's in it |
 |---|---|
@@ -69,6 +71,7 @@ if you add a calendar link. Everything it keeps stays in `%APPDATA%\Perch`:
 | `calendar.ics` | The last calendar download |
 | `focus.txt` | Pomodoro sessions and focus minutes per day |
 | `water.txt` | Water per day, in ml |
+| `ask.key` | Your Gemini key, only if you add one; encrypted for your Windows account |
 | `clipboard.dat` | Clipboard history, only if you turn on *Keep after restart*; encrypted for your Windows account |
 
 *Start with Windows* adds `Perch` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.

@@ -44,6 +44,7 @@
 #include "settingsui.h"
 #include "calendar.h"
 #include "mascot.h"
+#include "ask.h"
 
 #ifdef _MSC_VER
 #pragma comment(lib, "d2d1.lib")
@@ -133,6 +134,9 @@ enum {
     WM_APP_CAL_DONE = WM_APP + 30,      // calendar download finished: lp = CalJob*
     WM_APP_TRAY = WM_APP + 31,          // the tray icon was clicked
     WM_APP_STRAY = WM_APP + 32,
+    WM_APP_ASK_DONE = WM_APP + 35,      // an Ask job finished: lp = AskJob*
+    WM_APP_ASK = WM_APP + 36,           // tests: wp 0 = open | busy << 1 | has key << 2 | error << 3 | answer length << 8;
+                                        //        1 = open Ask; 2 = models known; 3 = close; 4 = save the key in global atom lp
     WM_APP_CLIP = WM_APP + 34,          // tests: wp 0 = items; 1 = show tab lp (0 Files, 1 Clipboard)
     WM_APP_WATER = WM_APP + 33,         // tests: wp 0 = today's ml; 1 = add lp ml (may be < 0); 2 = reminder check as if the minute were lp
                                         //        (returns 1 if the water pop-up shows); 3 = next reminder minute (-1: none)         // tests: pixels of the window that aren't clear, outside the area the notch drew last frame
@@ -145,11 +149,13 @@ enum { TIMER_ANIM = 1, TIMER_CLOCK = 2, TIMER_FLASH = 3, TIMER_SETTINGS = 6, TIM
        TIMER_PEEK = 15,                          // hover: open after the peek
        TIMER_WATER = 16,                         // water: the next reminder (or midnight)
        TIMER_CLIP = 17,                          // clipboard: "Copied" goes
-       TIMER_CALREM = 18 };                      // calendar: the next event reminder                        // clipboard: "Copied" goes                       // water: the next reminder (or midnight)                        // hover: open after the peek
+       TIMER_CALREM = 18,                        // calendar: the next event reminder
+       TIMER_ASKCOPY = 19 };                     // Ask: "Copied" goes
+static const int kAskHotkeyId = 1;           // RegisterHotKey id for Ctrl + Alt + Space                      // calendar: the next event reminder                        // clipboard: "Copied" goes                       // water: the next reminder (or midnight)                        // hover: open after the peek
 enum { CMD_QUIT = 100, CMD_AUTOSTART = 101,
        CMD_MEDIA_PLAYPAUSE = 104, CMD_MEDIA_NEXT = 105, CMD_MEDIA_PREV = 106, CMD_SHELF_CLEAR = 107,
        CMD_SETTINGS = 109, CMD_POMO_TOGGLE = 110, CMD_POMO_RESET = 111,
-       CMD_CAL_PASTE = 112, CMD_CAL_REFRESH = 113, CMD_CAL_REMOVE = 114, CMD_MINIMAL = 115, CMD_MASCOT = 116, CMD_ABOUT = 117,
+       CMD_CAL_PASTE = 112, CMD_CAL_REFRESH = 113, CMD_CAL_REMOVE = 114, CMD_MINIMAL = 115, CMD_MASCOT = 116, CMD_ABOUT = 117, CMD_ASK = 118, CMD_ASK_KEY = 119,
        CMD_SIZE0 = 130, // + Notch size (Auto, 100%, 115%, 130%, 150%)
        CMD_TILE_OPEN = 120, CMD_TILE_SHOW = 121, CMD_TILE_REMOVE = 122 };
 enum StateFlags {
@@ -190,6 +196,7 @@ static ID2D1SolidColorBrush* g_brush;
 static IDWriteTextFormat *g_fmtTime, *g_fmtDate, *g_fmtIcon, *g_fmtSmall, *g_fmtPill, *g_fmtPillTime;
 static IDWriteTextFormat *g_fmtTitle, *g_fmtArtist, *g_fmtCtl, *g_fmtMeta, *g_fmtTile, *g_fmtDrop;
 static IDWriteTextFormat* g_fmtToast; // toast text too long for the big clock-size font
+static IDWriteTextFormat* g_fmtAsk; // Ask: the answer, wrapped
 static IDWriteTextFormat *g_fmtHdr, *g_fmtHdrDate, *g_fmtHdrTime, *g_fmtChevron, *g_fmtBarIcon, *g_fmtPlay; // pages
 static IDWriteTextFormat *g_fmtTodoCount, *g_fmtTodoBtn, *g_fmtTodoRow, *g_fmtTodoTime, *g_fmtTodoSmall, *g_fmtTodoField; // To-do
 static IDWriteTextFormat *g_fmtActTitle, *g_fmtActSub, *g_fmtActBtn; // reminder pop-up
@@ -735,6 +742,8 @@ static void CreateFormats() {
     g_fmtDrop = MakeFormat(L"Segoe UI", DWRITE_FONT_WEIGHT_SEMI_BOLD, 15, true);
     g_fmtCtl = MakeFormat(iconFont, DWRITE_FONT_WEIGHT_NORMAL, 15, true);
     g_fmtHdr = MakeFormat(L"Segoe UI", DWRITE_FONT_WEIGHT_SEMI_BOLD, 15, false);
+    g_fmtAsk = MakeFormat(L"Segoe UI", DWRITE_FONT_WEIGHT_NORMAL, 12, false);
+    if (g_fmtAsk) { g_fmtAsk->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP); g_fmtAsk->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR); }
     g_fmtHdr->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     g_fmtHdrDate = MakeFormat(L"Segoe UI", DWRITE_FONT_WEIGHT_NORMAL, 13, false);
     g_fmtHdrDate->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -859,6 +868,7 @@ enum Hot { HOT_NONE = -1, HOT_ARROW_L = 0, HOT_ARROW_R, HOT_DOTS, HOT_LYRICS, HO
            HOT_WATER_ADD = 56, HOT_WATER_UNDO,             // water page: + a cup, take one back
            HOT_SHELF_TAB0 = 58, HOT_CLIP_CLEAR = 9,         // Shelf: Files / Clipboard tabs (+ tab); Clear the clipboard list
            HOT_CLIP_ROW0 = 280, HOT_CLIP_DEL0 = 290,        // clipboard rows: copy, remove (+ row)
+           HOT_ASK_COPY = 275, HOT_ASK_SETTINGS = 276,      // Ask: Copy answer; Open Settings (no key yet)
            HOT_TODO_ROW0 = 60, HOT_TODO_UP0 = 100, HOT_TODO_DOWN0 = 140, HOT_TODO_DEL0 = 180, HOT_TODO_MAX = 220, // + row
            HOT_CAL_DAY0 = 230, HOT_CAL_DAYMAX = 272 }; // + calendar cell
 static D2D1_POINT_2F TodoHotCenter(int hot); // To-do page and reminder pop-up controls
@@ -869,6 +879,7 @@ static D2D1_RECT_F ShelfTabRect(int tab) { float cx = kWinW / 2; return tab ? D2
 static D2D1_RECT_F ClipClearRect() { float right = PX() + kExpW - 40; return D2D1::RectF(right - 44, 48, right, 64); }
 static D2D1_RECT_F ClipRowRect(int row) { float px = PX(); return D2D1::RectF(px + 32, 70 + row * 26.0f, px + kExpW - 32, 94 + row * 26.0f); }
 static D2D1_POINT_2F ClipDelCenter(int row) { D2D1_RECT_F r = ClipRowRect(row); return D2D1::Point2F(r.right - 13, (r.top + r.bottom) / 2); }
+static D2D1_RECT_F AskCopyRect();
 static D2D1_POINT_2F HotCenter(int hot) {
     float px = PX(), cx = kWinW / 2;
     switch (hot) {
@@ -885,6 +896,7 @@ static D2D1_POINT_2F HotCenter(int hot) {
     case HOT_WATER_UNDO: return D2D1::Point2F(px + 322, 105);
     }
     if (hot == HOT_SHELF_TAB0 || hot == HOT_SHELF_TAB0 + 1) { D2D1_RECT_F r = ShelfTabRect(hot - HOT_SHELF_TAB0); return D2D1::Point2F((r.left + r.right) / 2, (r.top + r.bottom) / 2); }
+    if (hot == HOT_ASK_COPY || hot == HOT_ASK_SETTINGS) { D2D1_RECT_F r = AskCopyRect(); return D2D1::Point2F(r.right - 20, (r.top + r.bottom) / 2); }
     if (hot == HOT_CLIP_CLEAR) { D2D1_RECT_F r = ClipClearRect(); return D2D1::Point2F((r.left + r.right) / 2, (r.top + r.bottom) / 2); }
     if (hot >= HOT_CLIP_ROW0 && hot < HOT_CLIP_ROW0 + kClipRows) { D2D1_RECT_F r = ClipRowRect(hot - HOT_CLIP_ROW0); return D2D1::Point2F(r.left + 60, (r.top + r.bottom) / 2); }
     if (hot >= HOT_CLIP_DEL0 && hot < HOT_CLIP_DEL0 + kClipRows) return ClipDelCenter(hot - HOT_CLIP_DEL0);
@@ -3227,6 +3239,259 @@ static ID2D1PathGeometry* PillGeometry(float x, float w, float h, float r, float
     return path;
 }
 
+// ---- Ask Perch: questions to Gemini with your own key ----
+// Ctrl + Alt + Space (or right-click > Ask Perch) opens the notch on a question field; Enter sends it on a
+// worker thread (ask.cpp) and the answer shows under it, scrollable. Esc or switching away closes it.
+// The key is kept encrypted for this Windows account (DPAPI) in ask.key, never in settings.ini. The model
+// is the user's choice: Settings lists the models their key can use.
+static bool g_ask = false;                 // the Ask panel is showing
+static bool g_askBusy = false;             // a question is on its way
+static std::wstring g_askInput, g_askQuestion, g_askAnswer, g_askError;
+static std::vector<AskTurn> g_askTurns;    // the conversation so far (kept short)
+static float g_askScroll = 0;              // DIPs scrolled into the answer
+static int g_askCopied = 0;                // "Copied" shows (until the timer)
+static std::vector<std::wstring> g_askModels; // what the key may use, from Google
+static bool g_askModelsBusy = false, g_askModelsTried = false; // asked Google once for this key
+struct AskJob { int kind; std::wstring key, model; std::vector<AskTurn> turns; int status = 0; std::wstring answer, error; std::vector<std::wstring> models; };
+static std::wstring AskKeyFile() { return DataDir() + L"\\ask.key"; }
+static std::wstring AskKey() {
+    std::wstring key;
+    FILE* f = _wfopen(AskKeyFile().c_str(), L"rb");
+    if (!f) return key;
+    std::vector<BYTE> enc;
+    BYTE buf[1024];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof buf, f)) > 0) enc.insert(enc.end(), buf, buf + n);
+    fclose(f);
+    DATA_BLOB in = {(DWORD)enc.size(), enc.data()}, out = {};
+    if (!enc.empty() && CryptUnprotectData(&in, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &out)) {
+        key.assign((const wchar_t*)out.pbData, out.cbData / sizeof(wchar_t));
+        SecureZeroMemory(out.pbData, out.cbData);
+        LocalFree(out.pbData);
+    }
+    return key;
+}
+static bool AskSaveKey(const std::wstring& key) {
+    DATA_BLOB in = {(DWORD)(key.size() * sizeof(wchar_t)), (BYTE*)key.data()}, out = {};
+    if (!CryptProtectData(&in, L"Perch Gemini key", nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &out)) return false;
+    bool ok = false;
+    if (FILE* f = _wfopen(AskKeyFile().c_str(), L"wb")) { ok = fwrite(out.pbData, 1, out.cbData, f) == out.cbData; fclose(f); }
+    LocalFree(out.pbData);
+    return ok;
+}
+static bool AskHasKey() { return GetFileAttributesW(AskKeyFile().c_str()) != INVALID_FILE_ATTRIBUTES; }
+static DWORD WINAPI AskThread(LPVOID p) {
+    AskJob* j = (AskJob*)p;
+    if (j->kind == 0) j->status = Ask_Generate(j->key, j->model, j->turns, j->answer, j->error);
+    else j->status = Ask_ListModels(j->key, j->models, j->error);
+    SecureZeroMemory(&j->key[0], j->key.size() * sizeof(wchar_t));
+    if (!PostMessageW(g_hwnd, WM_APP_ASK_DONE, 0, (LPARAM)j)) delete j;
+    return 0;
+}
+static void AskStart(AskJob* j) {
+    HANDLE t = CreateThread(nullptr, 64 * 1024, AskThread, j, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+    if (t) CloseHandle(t);
+    else delete j;
+}
+static void AskFetchModels() { // the models this key can use, for the Settings list
+    if (g_askModelsBusy || !AskHasKey()) return;
+    g_askModelsBusy = g_askModelsTried = true;
+    AskStart(new AskJob{1, AskKey()});
+}
+static void AskSend() {
+    std::wstring q = g_askInput;
+    while (!q.empty() && iswspace(q.back())) q.pop_back();
+    while (!q.empty() && iswspace(q.front())) q.erase(q.begin());
+    if (q.empty() || g_askBusy) return;
+    if (!AskHasKey()) { g_askError = L"Add your Gemini key in Settings > Ask Perch first."; Render(); return; }
+    g_askQuestion = q;
+    g_askInput.clear();
+    g_askAnswer.clear();
+    g_askError.clear();
+    g_askScroll = 0;
+    g_askBusy = true;
+    g_askTurns.push_back({true, q});
+    if (g_askTurns.size() > 12) g_askTurns.erase(g_askTurns.begin(), g_askTurns.end() - 12); // the last few exchanges
+    AskStart(new AskJob{0, AskKey(), g_set.askModel, g_askTurns});
+    Render();
+}
+static void OnAskDone(AskJob* j) {
+    if (j->kind == 1) {
+        g_askModelsBusy = false;
+        if (j->status == 200) g_askModels = j->models;
+        SettingsUI_Refresh(g_set);
+    } else {
+        g_askBusy = false;
+        if (j->status == 200) { g_askAnswer = j->answer; g_askTurns.push_back({false, j->answer}); }
+        else { g_askError = j->error; if (!g_askTurns.empty() && g_askTurns.back().user) g_askTurns.pop_back(); }
+        UpdateTarget();
+        if (!g_hidden) Render();
+    }
+    delete j;
+}
+static void AskFocus() { SetForegroundWindow(g_hwnd); SetFocus(g_hwnd); }
+static void AskOpen() {
+    g_ask = true;
+    g_askCopied = 0;
+    if (g_edit) CloseEditor();
+    AskFocus();
+    UpdateTarget();
+    KickAnim();
+    Render();
+}
+static void AskClose() { g_ask = false; UpdateTarget(); KickAnim(); if (!g_hidden) Render(); }
+static bool AskHoldOpen() { return g_ask && (GetForegroundWindow() == g_hwnd || g_askBusy); }
+static void AskCopyAnswer() {
+    if (g_askAnswer.empty() || !OpenClipboard(g_hwnd)) return;
+    EmptyClipboard();
+    if (HGLOBAL m = GlobalAlloc(GMEM_MOVEABLE, (g_askAnswer.size() + 1) * sizeof(wchar_t))) {
+        memcpy(GlobalLock(m), g_askAnswer.c_str(), (g_askAnswer.size() + 1) * sizeof(wchar_t));
+        GlobalUnlock(m);
+        if (!SetClipboardData(CF_UNICODETEXT, m)) GlobalFree(m);
+    }
+    CloseClipboard();
+    g_clipOwnSeq = GetClipboardSequenceNumber(); // not into clipboard history
+    g_askCopied = 1;
+    SetTimer(g_hwnd, TIMER_ASKCOPY, 1400, nullptr);
+}
+static void AskChar(wchar_t c) {
+    if (c >= 32 && c != 127 && g_askInput.size() < 2000) g_askInput += c;
+    Render();
+}
+static bool AskKeyDown(WPARAM vk) {
+    if (!g_ask) return false;
+    bool ctrl = GetKeyState(VK_CONTROL) < 0;
+    switch (vk) {
+    case VK_BACK: if (!g_askInput.empty()) g_askInput.pop_back(); break;
+    case VK_RETURN: AskSend(); return true;
+    case VK_ESCAPE: AskClose(); return true;
+    case VK_UP: case VK_PRIOR: g_askScroll = std::max(0.0f, g_askScroll - (vk == VK_UP ? 20.0f : 60.0f)); break;
+    case VK_DOWN: case VK_NEXT: g_askScroll += vk == VK_DOWN ? 20.0f : 60.0f; break;
+    case 'V':
+        if (!ctrl || !OpenClipboard(g_hwnd)) return false;
+        if (HANDLE h = GetClipboardData(CF_UNICODETEXT))
+            if (const wchar_t* p = (const wchar_t*)GlobalLock(h)) {
+                for (; *p && g_askInput.size() < 2000; p++) g_askInput += *p == L'\r' || *p == L'\n' || *p == L'\t' ? L' ' : *p;
+                GlobalUnlock(h);
+            }
+        CloseClipboard();
+        break;
+    case 'C': if (!ctrl) return false; AskCopyAnswer(); break;
+    default: return false;
+    }
+    Render();
+    return true;
+}
+static D2D1_RECT_F AskFieldRect() { float px = PX(); return D2D1::RectF(px + 30, 48, px + kExpW - 30, 74); }
+static D2D1_RECT_F AskAnswerRect() { float px = PX(); return D2D1::RectF(px + 34, 82, px + kExpW - 34, 146); }
+static D2D1_RECT_F AskCopyRect() { float px = PX(); return D2D1::RectF(px + kExpW - 92, 148, px + kExpW - 34, 164); }
+static void DrawAsk(float a) {
+    float px = PX();
+    D2D1_COLOR_F fg = WithAlpha(g_fg, a), grey = WithAlpha(g_grey, a);
+    Text(L"Ask Perch", g_fmtHdr, D2D1::RectF(px + 32, 21.6f, px + 200, 41.6f), fg);
+    g_fmtMeta->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+    Text(g_set.askModel.c_str(), g_fmtMeta, D2D1::RectF(px + 200, 23, px + kExpW - 34, 39), grey);
+    g_fmtMeta->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+
+    D2D1_RECT_F f = AskFieldRect();
+    g_brush->SetColor(WithAlpha(g_fg, 0.08f * a));
+    g_rt->FillRoundedRectangle(D2D1::RoundedRect(f, 13, 13), g_brush);
+    D2D1_RECT_F tr = D2D1::RectF(f.left + 12, f.top + 5, f.right - 12, f.bottom - 5);
+    bool typing = GetForegroundWindow() == g_hwnd;
+    std::wstring shown = g_askInput;
+    // keep the end of a long question in view
+    while (shown.size() > 1 && TextWidth(shown.c_str(), g_fmtMeta) > tr.right - tr.left - 8) shown.erase(0, 1);
+    if (shown.empty()) Text(g_askBusy ? L"" : L"Ask anything\x2026", g_fmtMeta, tr, grey);
+    else Text(shown.c_str(), g_fmtMeta, tr, fg);
+    if (typing && !g_askBusy) { // the caret
+        float cx = tr.left + (shown.empty() ? 0 : TextWidth(shown.c_str(), g_fmtMeta)) + 1;
+        g_brush->SetColor(WithAlpha(kWaterBlue, a));
+        g_rt->FillRectangle(D2D1::RectF(cx, tr.top + 1, cx + 1.2f, tr.bottom - 1), g_brush);
+    }
+
+    D2D1_RECT_F ar = AskAnswerRect();
+    std::wstring body;
+    D2D1_COLOR_F col = fg;
+    if (g_askBusy) { body = L"Thinking\x2026"; col = grey; }
+    else if (!g_askError.empty()) { body = g_askError; col = WithAlpha(kRed, a); }
+    else if (!g_askAnswer.empty()) body = g_askAnswer;
+    else if (!AskHasKey()) { body = L"Ask Perch uses Google's Gemini with your own free key. Add it in Settings > Ask Perch."; col = grey; }
+    else { body = L"Type a question and press Enter. Esc closes."; col = grey; }
+    if (!g_askQuestion.empty() && (g_askBusy || !g_askAnswer.empty() || !g_askError.empty())) body = g_askQuestion + L"\n\n" + body;
+    IDWriteTextLayout* l = nullptr;
+    if (SUCCEEDED(g_dw->CreateTextLayout(body.c_str(), (UINT32)body.size(), g_fmtAsk, ar.right - ar.left, 10000, &l))) {
+        DWRITE_TEXT_METRICS m;
+        l->GetMetrics(&m);
+        float maxScroll = std::max(0.0f, m.height - (ar.bottom - ar.top));
+        g_askScroll = std::min(g_askScroll, maxScroll);
+        if (!g_askQuestion.empty() && (g_askBusy || !g_askAnswer.empty() || !g_askError.empty())) {
+            DWRITE_TEXT_RANGE q = {0, (UINT32)g_askQuestion.size()};
+            l->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD, q);
+        }
+        g_rt->PushAxisAlignedClip(ar, D2D1_ANTIALIAS_MODE_ALIASED);
+        g_brush->SetColor(col);
+        g_rt->DrawTextLayout(D2D1::Point2F(ar.left, ar.top - g_askScroll), l, g_brush);
+        g_rt->PopAxisAlignedClip();
+        if (maxScroll > 0) { // where you are in it
+            float th = (ar.bottom - ar.top) * (ar.bottom - ar.top) / m.height, ty = ar.top + (ar.bottom - ar.top - th) * g_askScroll / maxScroll;
+            g_brush->SetColor(WithAlpha(g_fg, 0.25f * a));
+            g_rt->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(ar.right + 6, ty, ar.right + 9, ty + th), 1.5f, 1.5f), g_brush);
+        }
+        l->Release();
+    }
+    if (!g_askAnswer.empty() && !g_askBusy) {
+        g_fmtMeta->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+        Text(g_askCopied ? L"Copied" : L"Copy answer", g_fmtMeta, AskCopyRect(), WithAlpha(g_hot == HOT_ASK_COPY ? g_fg : g_grey, a));
+        g_fmtMeta->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    }
+    if (!AskHasKey()) {
+        g_fmtMeta->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+        Text(L"Open Settings", g_fmtMeta, AskCopyRect(), WithAlpha(g_hot == HOT_ASK_SETTINGS ? g_fg : kWaterBlue, a));
+        g_fmtMeta->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    }
+}
+static void UiAskStatus(wchar_t* out, int n) {
+    if (!AskHasKey()) wcsncpy(out, L"Not set", n);
+    else if (g_askModelsBusy) wcsncpy(out, L"Saved \x00B7 checking models\x2026", n);
+    else if (g_askModels.empty() && g_askModelsTried) wcsncpy(out, L"Saved \x00B7 couldn't load the models (offline?)", n);
+    else swprintf(out, n, g_askModels.empty() ? L"Saved" : L"Saved \x00B7 %d models", (int)g_askModels.size());
+    out[n - 1] = 0;
+}
+static void UiAskModels(std::vector<std::wstring>& out) {
+    out = g_askModels;
+    if (out.empty() && AskHasKey() && !g_askModelsTried) AskFetchModels();
+}
+static void AskPasteKey() {
+    std::wstring key;
+    if (OpenClipboard(g_hwnd)) {
+        if (HANDLE h = GetClipboardData(CF_UNICODETEXT))
+            if (const wchar_t* p = (const wchar_t*)GlobalLock(h)) { key = p; GlobalUnlock(h); }
+        CloseClipboard();
+    }
+    key.erase(std::remove_if(key.begin(), key.end(), [](wchar_t c) { return iswspace(c); }), key.end());
+    bool looks = key.size() >= 30 && key.size() <= 200 && std::all_of(key.begin(), key.end(), [](wchar_t c) { return iswalnum(c) || c == L'-' || c == L'_'; });
+    if (!looks) { ShowToast(L"No key on the clipboard", L"Copy your key from aistudio.google.com, then paste again.", L"\xE8BD"); return; }
+    if (!AskSaveKey(key)) { ShowToast(L"Couldn't save the key", L"Check that Perch can write to its folder.", L"\xE8BD"); return; }
+    SecureZeroMemory(&key[0], key.size() * sizeof(wchar_t));
+    g_askModels.clear();
+    g_askError.clear();
+    g_askModelsTried = false;
+    AskFetchModels();
+    ShowToast(L"Gemini key saved", L"Encrypted for your Windows account", L"\xE8BD");
+    SettingsUI_Refresh(g_set);
+}
+static void AskRemoveKey() {
+    DeleteFileW(AskKeyFile().c_str());
+    g_askModels.clear();
+    g_askModelsTried = false;
+    SettingsUI_Refresh(g_set);
+}
+static void AskHotkey() { // follow the setting
+    static bool on = false;
+    if (g_set.askHotkey && !on) on = RegisterHotKey(g_hwnd, kAskHotkeyId, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_SPACE) != 0;
+    else if (!g_set.askHotkey && on) { UnregisterHotKey(g_hwnd, kAskHotkeyId); on = false; }
+}
+
 static void Render() {
     if (!g_rt && !CreateSurface()) return;
 
@@ -3370,6 +3635,8 @@ static void Render() {
                 }
             }
         } else {
+            if (g_ask) DrawAsk(content);
+            else {
             // ---- pages: header status, the page (sliding when it changes), arrows and dots ----
             DrawHeaderStatus(content);
             g_rt->PushAxisAlignedClip(D2D1::RectF(px + 1, 0, px + kExpW - 1, h), D2D1_ANTIALIAS_MODE_ALIASED);
@@ -3378,6 +3645,7 @@ static void Render() {
             DrawPage(g_page, content * t, g_pageDir * 48 * (1 - t));
             g_rt->PopAxisAlignedClip();
             DrawPageNav(content);
+            }
         }
     }
 
@@ -3411,7 +3679,8 @@ static void SetTarget(float t) {
 }
 
 static bool TodoHoldOpen();
-static void UpdateTarget() { SetTarget((g_hoverOpen || g_flash || g_dragOver || TodoHoldOpen()) ? 1.0f : 0.0f); }
+static bool AskHoldOpen();
+static void UpdateTarget() { SetTarget((g_hoverOpen || g_flash || g_dragOver || TodoHoldOpen() || AskHoldOpen()) ? 1.0f : 0.0f); }
 
 // Switches the open notch to `page`, sliding the old one out (dir +1: from the right, -1: from the left).
 static int PageSlot(int kind) { for (int i = 0; i < g_pageN; i++) if (g_pages[i] == kind) return i; return -1; }
@@ -3723,7 +3992,7 @@ static void ApplySettings(bool announce, bool quiet = false) {
         CreateSurface();
     }
     ArmMinuteTimer();
-    if (g_hwnd) { ArmWaterTimer(); ClipListen(); ArmCalRemTimer(); }
+    if (g_hwnd) { ArmWaterTimer(); ClipListen(); ArmCalRemTimer(); AskHotkey(); }
     UpdateKeyboardHook();
     SetGlassColours(g_set.glass);
     SetBlur(g_set.glass);
@@ -3776,7 +4045,8 @@ static void UiCalStatus(wchar_t* out, int n) { // the status under "Calendar lin
 }
 static void OpenSettings(int section = -1) {
     SettingsUIHost host = {UiCommit, OpenSettingsFile, AutostartEnabled, SetAutostart,
-                           CalPasteLink, []() { CalFetch(true); }, []() { CalSetLink(L""); }, UiCalStatus, UiWaterStatus};
+                           CalPasteLink, []() { CalFetch(true); }, []() { CalSetLink(L""); }, UiCalStatus, UiWaterStatus,
+                           AskPasteKey, AskRemoveKey, UiAskStatus, UiAskModels};
     SettingsUI_Show(g_inst, g_set, host, section);
 }
 
@@ -3929,6 +4199,8 @@ static void HandleCommand(int cmd) {
     case CMD_MINIMAL: { Settings s = g_set; s.minimal = !s.minimal; Settings_Save(SettingsFile(), s); ApplySettings(false, true); break; }
     case CMD_MASCOT: { Settings s = g_set; s.mascot = !s.mascot; Settings_Save(SettingsFile(), s); ApplySettings(false, true); break; }
     case CMD_ABOUT: OpenSettings(SEC_ABOUT); break;
+    case CMD_ASK: AskOpen(); break;
+    case CMD_ASK_KEY: AskPasteKey(); break;
     case CMD_CAL_REFRESH: CalFetch(true); break;
     case CMD_CAL_REMOVE: CalSetLink(L""); break;
     case CMD_SIZE0: case CMD_SIZE0 + 1: case CMD_SIZE0 + 2: case CMD_SIZE0 + 3: case CMD_SIZE0 + 4: {
@@ -3961,6 +4233,7 @@ static void ShowMenu(POINT screenPt) {
     AppendMenuW(m, MF_STRING | (AutostartEnabled() ? MF_CHECKED : 0), CMD_AUTOSTART, L"Start with Windows");
     AppendMenuW(m, MF_STRING | (g_shelf.empty() ? MF_GRAYED : 0), CMD_SHELF_CLEAR, L"Clear shelf");
     AppendMenuW(m, MF_STRING | (g_set.minimal ? MF_CHECKED : 0), CMD_MINIMAL, L"Minimal notch"); // a small tab while nothing plays
+    AppendMenuW(m, MF_STRING, CMD_ASK, L"Ask Perch\tCtrl+Alt+Space");
     AppendMenuW(m, MF_STRING, CMD_CAL_PASTE, g_set.calLink.empty() ? L"Paste calendar link" : L"Paste new calendar link");
     if (!g_set.calLink.empty()) {
         AppendMenuW(m, MF_STRING, CMD_CAL_REFRESH, L"Refresh calendar");
@@ -3979,6 +4252,11 @@ static void ShowMenu(POINT screenPt) {
 static bool PagesActive() { return g_t >= 0.9f && !g_toast; }
 static int HitHot(float x, float y) {
     if (g_toast && g_act) return g_t >= 0.9f ? TodoHit(x, y) : HOT_NONE;
+    if (g_ask) {
+        if (g_t < 0.9f || g_toast) return HOT_NONE;
+        if (InRect(AskCopyRect(), x, y)) return !AskHasKey() ? HOT_ASK_SETTINGS : !g_askAnswer.empty() && !g_askBusy ? HOT_ASK_COPY : HOT_NONE;
+        return HOT_NONE;
+    }
     if (!PagesActive()) return HOT_NONE;
     auto over = [&](int hot) {
         D2D1_POINT_2F c = HotCenter(hot);
@@ -4044,6 +4322,8 @@ static void ClickHot(int hot) {
     case HOT_SHELF_CLEAR: ShelfClear(); break;
     case HOT_SHELF_TAB0: case HOT_SHELF_TAB0 + 1: g_shelfTab = hot - HOT_SHELF_TAB0; g_clipScroll = 0; break;
     case HOT_CLIP_CLEAR: ClipClear(); break;
+    case HOT_ASK_COPY: AskCopyAnswer(); break;
+    case HOT_ASK_SETTINGS: AskClose(); OpenSettings(SEC_ASK); break;
     case HOT_POMO_START: PomoToggle(); break;
     case HOT_POMO_RESET: PomoReset(); break;
     case HOT_WATER_ADD: WaterAdd(g_set.waterCup); break;
@@ -4117,6 +4397,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_MOUSEWHEEL: { // the wheel flips pages (up = previous)
         static int acc = 0;
+        if (g_ask) { g_askScroll = std::max(0.0f, g_askScroll - GET_WHEEL_DELTA_WPARAM(wp) / 120.0f * 24); Render(); return 0; }
         if (!PagesActive()) return 0;
         if (g_page == PAGE_TODO && g_todoCal) {
             POINT pt = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
@@ -4227,12 +4508,15 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         HandleCommand(LOWORD(wp));
         return 0;
     case WM_CHAR:
+        if (g_ask) { AskChar((wchar_t)wp); return 0; }
         if (g_edit) { TodoChar((wchar_t)wp); return 0; }
         break;
     case WM_KEYDOWN:
+        if (AskKeyDown(wp)) return 0;
         if (TodoKey(wp)) return 0;
         break;
     case WM_ACTIVATE: // typing in the editor keeps the notch open; leaving it lets it close
+        if (LOWORD(wp) == WA_INACTIVE && g_ask && !g_askBusy) g_ask = false; // switched away: Ask closes (its text stays)
         UpdateTarget();
         if (!g_hidden) Render();
         break;
@@ -4242,6 +4526,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == TIMER_ANIM) OnAnimTick();
         else if (wp == TIMER_CLOCK) { if (!g_hidden) Render(); }
         else if (wp == TIMER_TODO) { KillTimer(hwnd, TIMER_TODO); CheckTaskReminders(NowMinute()); if (!g_hidden) Render(); }
+        else if (wp == TIMER_ASKCOPY) { KillTimer(hwnd, TIMER_ASKCOPY); g_askCopied = 0; if (!g_hidden) Render(); }
         else if (wp == TIMER_CLIP) { KillTimer(hwnd, TIMER_CLIP); g_clipCopied = -1; if (!g_hidden) Render(); }
         else if (wp == TIMER_CALREM) { KillTimer(hwnd, TIMER_CALREM); CheckCalReminders(NowMinute()); if (!g_hidden) Render(); }
         else if (wp == TIMER_WATER) { KillTimer(hwnd, TIMER_WATER); OnWaterTimer(); if (!g_hidden) Render(); }
@@ -4351,6 +4636,26 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_APP_CAL_DONE:
         OnCalDone((CalJob*)lp);
         return 0;
+    case WM_APP_ASK_DONE:
+        OnAskDone((AskJob*)lp);
+        return 0;
+    case WM_HOTKEY:
+        if (wp == kAskHotkeyId) { if (g_ask && GetForegroundWindow() == g_hwnd) AskClose(); else AskOpen(); }
+        return 0;
+    case WM_APP_ASK:
+        if (wp == 1) { AskOpen(); return 1; }
+        if (wp == 2) return (LRESULT)g_askModels.size();
+        if (wp == 3) { AskClose(); return 0; }
+        if (wp == 4) { // tests: save the key held in global atom lp (as Paste key would, without the clipboard)
+            wchar_t k[256] = L"";
+            if (!GlobalGetAtomNameW((ATOM)lp, k, 256) || !AskSaveKey(k)) return 0;
+            SecureZeroMemory(k, sizeof k);
+            g_askModels.clear();
+            g_askModelsTried = false;
+            AskFetchModels();
+            return 1;
+        }
+        return (g_ask ? 1 : 0) | (g_askBusy ? 2 : 0) | (AskHasKey() ? 4 : 0) | (g_askError.empty() ? 0 : 8) | ((LRESULT)std::min<size_t>(g_askAnswer.size(), 0xFFFFFF) << 8);
     case WM_APP_TRAY: // NOTIFYICON_VERSION_4: the event is in LOWORD(lp), the point in wp
         if (LOWORD(lp) == NIN_SELECT || LOWORD(lp) == NIN_KEYSELECT || LOWORD(lp) == WM_CONTEXTMENU) {
             POINT pt = {GET_X_LPARAM(wp), GET_Y_LPARAM(wp)};

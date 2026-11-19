@@ -49,7 +49,7 @@ const SectionInfo kSections[SEC_COUNT] = {
     {L"General", L"\xE713", 0x8F8F94, false},    {L"Display", L"\xE7F4", 0x5E5CE5, false},
     {L"Pages", L"\xE8FD", 0x33ADE5, false},      {L"Appearance", L"\xE793", 0x424247, false},
     {L"Music and lyrics", L"\xEC4F", 0xFF385E, true}, {L"Widgets", L"\xF0E2", 0x0A85FF, true},
-    {L"Ask Perch", L"\xE8BD", 0x6B54FF, true},   {L"To-do", L"\xE73E", 0x30C759, false},
+    {L"Ask Perch", L"\xE8BD", 0x6B54FF, false},   {L"To-do", L"\xE73E", 0x30C759, false},
     {L"Pomodoro", L"\xE916", 0x7D66FA, false},   {L"Water", L"\xEB42", 0x0A85FF, false},
     {L"Shelf", L"\xE7B8", 0xFFB233, false},      {L"HUD & popups", L"\xEA8F", 0x30ABDB, false},
     {L"About", L"\xE946", 0x636369, false}};
@@ -70,6 +70,7 @@ enum Id {
     W_REMIND, W_GOAL, W_CUP, W_FROM, W_UNTIL,
     C_HISTORY, C_MAX, C_REMEMBER,
     T_REMIND,
+    K_PASTE, K_REMOVE, K_MODEL, K_HOTKEY,
     I_SOON, // a Coming soon control (never hit)
 };
 
@@ -158,6 +159,7 @@ bool GetBool(int id) {
     case H_BT: return g_s.popBluetooth;
     case W_REMIND: return g_s.waterRemind;
     case C_HISTORY: return g_s.clipHistory;
+    case K_HOTKEY: return g_s.askHotkey;
     case C_REMEMBER: return g_s.clipRemember;
     }
     return false;
@@ -184,6 +186,7 @@ void FlipBool(int id) {
     case H_BT: g_s.popBluetooth = !g_s.popBluetooth; break;
     case W_REMIND: g_s.waterRemind = !g_s.waterRemind; break;
     case C_HISTORY: g_s.clipHistory = !g_s.clipHistory; break;
+    case K_HOTKEY: g_s.askHotkey = !g_s.askHotkey; break;
     case C_REMEMBER: g_s.clipRemember = !g_s.clipRemember; break;
     default: return;
     }
@@ -231,6 +234,16 @@ void Step(int id, int dir) {
     case O_LONG: g_s.pomoLong = clamp(g_s.pomoLong + 5 * dir, 5, 60); break;
     case W_CUP: g_s.waterCup = clamp(g_s.waterCup + 50 * dir, 100, 1000); break;
     case C_MAX: g_s.clipMax = clamp(g_s.clipMax + 5 * dir, 5, 50); break;
+    case K_MODEL: { // step through the models the key may use
+        std::vector<std::wstring> m;
+        if (g_host.askModels) g_host.askModels(m);
+        if (m.empty()) return;
+        int i = -1;
+        for (int k = 0; k < (int)m.size(); k++) if (m[k] == g_s.askModel) i = k;
+        i = i < 0 ? 0 : (i + dir + (int)m.size()) % (int)m.size();
+        g_s.askModel = m[i];
+        break;
+    }
     case W_FROM: g_s.waterFrom = clamp(g_s.waterFrom + 30 * dir, 0, g_s.waterUntil - 60); break;
     case W_UNTIL: g_s.waterUntil = clamp(g_s.waterUntil + 30 * dir, g_s.waterFrom + 60, 23 * 60 + 30); break;
     default: return;
@@ -246,6 +259,7 @@ std::wstring StepText(int id) {
     case O_LONG: swprintf(b, 32, L"%d min", g_s.pomoLong); break;
     case W_CUP: swprintf(b, 32, L"%d ml", g_s.waterCup); break;
     case C_MAX: swprintf(b, 32, L"%d items", g_s.clipMax); break;
+    case K_MODEL: return g_s.askModel;
     case W_FROM: swprintf(b, 32, L"%02d:%02d", g_s.waterFrom / 60, g_s.waterFrom % 60); break;
     case W_UNTIL: swprintf(b, 32, L"%02d:%02d", g_s.waterUntil / 60, g_s.waterUntil % 60); break;
     }
@@ -632,13 +646,22 @@ void BuildWidgets() {
           {RK_TEXT, L"Countdown", nullptr, I_SOON, true, {}, {}}});
 }
 void BuildAsk() {
-    Header(L"Ask Perch", true);
+    Header(L"Ask Perch", false);
     Label(L"Gemini");
-    Card({{RK_BUTTONS, L"Gemini API key", L"Not set", I_SOON, true, {L"Paste key"}, {I_SOON}},
-          {RK_LABEL, L"Free key: aistudio.google.com > Get API key", nullptr, I_NONE, true, {}, {}}});
+    static wchar_t status[64];
+    wcscpy(status, L"Not set");
+    if (g_host.askStatus) g_host.askStatus(status, 64);
+    bool hasKey = wcscmp(status, L"Not set") != 0;
+    std::vector<std::wstring> models;
+    if (hasKey && g_host.askModels) g_host.askModels(models);
+    Card({{RK_BUTTONS, L"Gemini API key", status, K_PASTE, false, hasKey ? std::vector<std::wstring>{L"Paste new", L"Remove"} : std::vector<std::wstring>{L"Paste key"},
+           hasKey ? std::vector<int>{K_PASTE, K_REMOVE} : std::vector<int>{K_PASTE}},
+          {RK_LABEL, L"Free key: aistudio.google.com > Get API key, copy it, then Paste key", nullptr, I_NONE, false, {}, {}}});
+    Label(L"Model");
+    Card({{RK_STEP, L"Model", models.empty() ? (hasKey ? L"The models your key can use show here" : L"Add your key to pick one") : L"Use the arrows to pick one", K_MODEL, false, {}, {}}});
     Label(L"Ask");
-    Card({{RK_TEXT, L"Shortcut", L"Open Ask Perch from anywhere", I_SOON, true, {L"Ctrl + Alt + Space"}, {}},
-          {RK_TEXT, L"Privacy", L"Questions go only to Google, using your key", I_SOON, true, {}, {}}});
+    Card({{RK_TOGGLE, L"Shortcut", L"Ctrl + Alt + Space opens Ask Perch from anywhere", K_HOTKEY, false, {}, {}},
+          {RK_TEXT, L"Privacy", L"Questions go only to Google, using your key", I_NONE, false, {}, {}}});
 }
 void BuildTodo() {
     Header(L"To-do", false);
@@ -871,11 +894,13 @@ void Activate(const Hit& h) {
     case P_DOWN: MovePage(h.arg, 1); break;
     case P_TOGGLE: MovePage(h.arg, 0); break;
     case G_SIZE: case A_OPEN: case A_SPEED: case T_SNOOZE: case T_WEEK: case T_VIEW: case D_RING: case A_STYLE: case G_PETSTYLE: case W_GOAL: case T_REMIND: SetChoice(h.id, h.arg); break;
-    case A_TINT: case O_FOCUS: case O_SHORT: case O_LONG: case W_CUP: case W_FROM: case W_UNTIL: case C_MAX: Step(h.id, h.arg); break;
+    case A_TINT: case O_FOCUS: case O_SHORT: case O_LONG: case W_CUP: case W_FROM: case W_UNTIL: case C_MAX: case K_MODEL: Step(h.id, h.arg); break;
     case T_PASTE: if (g_host.calPaste) g_host.calPaste(); break;
     case T_REFRESH: if (g_host.calRefresh) g_host.calRefresh(); break;
     case T_REMOVE: if (g_host.calRemove) g_host.calRemove(); break;
     case B_FILE: if (g_host.openFile) g_host.openFile(); break;
+    case K_PASTE: if (g_host.askPaste) g_host.askPaste(); break;
+    case K_REMOVE: if (g_host.askRemove) g_host.askRemove(); break;
     case B_RESET: {
         Settings d;
         d.calLink = g_s.calLink; // the calendar link isn't a preference: keep it

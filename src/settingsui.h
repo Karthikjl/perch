@@ -4,6 +4,7 @@
 #pragma once
 #include <windows.h>
 #include "settings.h"
+#include <vector>
 
 struct SettingsUIHost {
     void (*commit)(const Settings& s);          // save to settings.ini and apply
@@ -15,6 +16,10 @@ struct SettingsUIHost {
     void (*calRemove)();
     void (*calStatus)(wchar_t* out, int n);     // "Not connected", "Connected · 12 events · Updated 14:02"
     void (*waterStatus)(wchar_t* out, int n);   // Water > Today: "1.25 L of 2 L"
+    void (*askPaste)();                         // Ask Perch > Gemini API key: Paste key / Remove
+    void (*askRemove)();
+    void (*askStatus)(wchar_t* out, int n);     // "Not set", "Saved · 12 models"
+    void (*askModels)(std::vector<std::wstring>& out); // the models the key may use (empty until Google answers)
 };
 
 // Sections, in sidebar order.
