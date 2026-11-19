@@ -68,6 +68,7 @@ enum Id {
     B_FILE, B_RESET,
     G_PETSTYLE, // arg = mascot style
     W_REMIND, W_GOAL, W_CUP, W_FROM, W_UNTIL,
+    C_HISTORY, C_MAX, C_REMEMBER,
     I_SOON, // a Coming soon control (never hit)
 };
 
@@ -155,6 +156,8 @@ bool GetBool(int id) {
     case H_WIFI: return g_s.popWifi;
     case H_BT: return g_s.popBluetooth;
     case W_REMIND: return g_s.waterRemind;
+    case C_HISTORY: return g_s.clipHistory;
+    case C_REMEMBER: return g_s.clipRemember;
     }
     return false;
 }
@@ -179,6 +182,8 @@ void FlipBool(int id) {
     case H_WIFI: g_s.popWifi = !g_s.popWifi; break;
     case H_BT: g_s.popBluetooth = !g_s.popBluetooth; break;
     case W_REMIND: g_s.waterRemind = !g_s.waterRemind; break;
+    case C_HISTORY: g_s.clipHistory = !g_s.clipHistory; break;
+    case C_REMEMBER: g_s.clipRemember = !g_s.clipRemember; break;
     default: return;
     }
     g_host.commit(g_s);
@@ -222,6 +227,7 @@ void Step(int id, int dir) {
     case O_SHORT: g_s.pomoShort = clamp(g_s.pomoShort + dir, 1, 60); break;
     case O_LONG: g_s.pomoLong = clamp(g_s.pomoLong + 5 * dir, 5, 60); break;
     case W_CUP: g_s.waterCup = clamp(g_s.waterCup + 50 * dir, 100, 1000); break;
+    case C_MAX: g_s.clipMax = clamp(g_s.clipMax + 5 * dir, 5, 50); break;
     case W_FROM: g_s.waterFrom = clamp(g_s.waterFrom + 30 * dir, 0, g_s.waterUntil - 60); break;
     case W_UNTIL: g_s.waterUntil = clamp(g_s.waterUntil + 30 * dir, g_s.waterFrom + 60, 23 * 60 + 30); break;
     default: return;
@@ -236,6 +242,7 @@ std::wstring StepText(int id) {
     case O_SHORT: swprintf(b, 32, L"%d min", g_s.pomoShort); break;
     case O_LONG: swprintf(b, 32, L"%d min", g_s.pomoLong); break;
     case W_CUP: swprintf(b, 32, L"%d ml", g_s.waterCup); break;
+    case C_MAX: swprintf(b, 32, L"%d items", g_s.clipMax); break;
     case W_FROM: swprintf(b, 32, L"%02d:%02d", g_s.waterFrom / 60, g_s.waterFrom % 60); break;
     case W_UNTIL: swprintf(b, 32, L"%02d:%02d", g_s.waterUntil / 60, g_s.waterUntil % 60); break;
     }
@@ -674,9 +681,9 @@ void BuildShelf() {
     Label(L"Shelf");
     Card({{RK_TOGGLE, L"Empty shelf at start", L"Clears the shelf each time Perch starts", S_EMPTY, false, {}, {}}});
     Label(L"Clipboard history");
-    Card({{RK_TOGGLE, L"Clipboard history", L"Keeps copied text in the Shelf to paste later", I_SOON, true, {}, {}},
-          {RK_STEP, L"Keep up to", L"Up to 50 items", I_SOON, true, {L"5 items"}, {}},
-          {RK_TOGGLE, L"Keep after restart", L"Saved only on this PC", I_SOON, true, {}, {}}});
+    Card({{RK_TOGGLE, L"Clipboard history", L"Keeps copied text in the Shelf to paste later", C_HISTORY, false, {}, {}},
+          {RK_STEP, L"Keep up to", L"Up to 50 items", C_MAX, false, {}, {}},
+          {RK_TOGGLE, L"Keep after restart", L"Encrypted, only on this PC", C_REMEMBER, false, {}, {}}});
     Label(L"Smart OCR");
     Card({{RK_TEXT, L"Copy text from screen", L"Drag over the screen to copy the text in it", I_SOON, true, {L"Ctrl + Alt + T"}, {}}});
 }
@@ -860,7 +867,7 @@ void Activate(const Hit& h) {
     case P_DOWN: MovePage(h.arg, 1); break;
     case P_TOGGLE: MovePage(h.arg, 0); break;
     case G_SIZE: case A_OPEN: case A_SPEED: case T_SNOOZE: case T_WEEK: case T_VIEW: case D_RING: case A_STYLE: case G_PETSTYLE: case W_GOAL: SetChoice(h.id, h.arg); break;
-    case A_TINT: case O_FOCUS: case O_SHORT: case O_LONG: case W_CUP: case W_FROM: case W_UNTIL: Step(h.id, h.arg); break;
+    case A_TINT: case O_FOCUS: case O_SHORT: case O_LONG: case W_CUP: case W_FROM: case W_UNTIL: case C_MAX: Step(h.id, h.arg); break;
     case T_PASTE: if (g_host.calPaste) g_host.calPaste(); break;
     case T_REFRESH: if (g_host.calRefresh) g_host.calRefresh(); break;
     case T_REMOVE: if (g_host.calRemove) g_host.calRemove(); break;

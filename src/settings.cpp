@@ -73,6 +73,14 @@ const wchar_t* kDefaultFile =
     L"From=08:00\r\n"
     L"Until=17:00\r\n"
     L"\r\n"
+    L"[Clipboard]\r\n"
+    L"; History: 1 keeps the text you copy in the Shelf's Clipboard tab. Copies that password managers\r\n"
+    L"; mark as private are skipped. Max: how many to keep (5-50).\r\n"
+    L"History=0\r\n"
+    L"Max=20\r\n"
+    L"; Remember: 1 keeps them after a restart, encrypted for your Windows account (clipboard.dat).\r\n"
+    L"Remember=0\r\n"
+    L"\r\n"
     L"[Calendar]\r\n"
     L"; Link: your Google Calendar's \"Secret address in iCal format\" (Google Calendar > Settings >\r\n"
     L"; your calendar > Integrate calendar). Right-click the notch > Paste calendar link also sets it.\r\n"
@@ -224,6 +232,9 @@ std::wstring Settings_Load(const std::wstring& file, Settings& s) {
     ReadChoice(file, L"Notch", L"MascotStyle", {kMascotKeys[0], kMascotKeys[1], kMascotKeys[2], kMascotKeys[3], kMascotKeys[4],
                kMascotKeys[5], kMascotKeys[6]}, s.mascotStyle, problem);
     for (const PopupKey& k : kPopups) ReadBool(file, L"Popups", k.key, s.*(k.field), problem);
+    ReadBool(file, L"Clipboard", L"History", s.clipHistory, problem);
+    ReadInt(file, L"Clipboard", L"Max", 5, 50, s.clipMax, problem);
+    ReadBool(file, L"Clipboard", L"Remember", s.clipRemember, problem);
     ReadBool(file, L"Water", L"Reminders", s.waterRemind, problem);
     {
         int g = s.waterGoal == 1500 ? 0 : s.waterGoal == 2500 ? 2 : s.waterGoal == 3000 ? 3 : 1;
@@ -297,6 +308,9 @@ void Settings_Save(const std::wstring& file, const Settings& s) {
     WritePrivateProfileStringW(L"Pomodoro", L"Focus", std::to_wstring(s.pomoFocus).c_str(), f);
     WritePrivateProfileStringW(L"Pomodoro", L"ShortBreak", std::to_wstring(s.pomoShort).c_str(), f);
     WritePrivateProfileStringW(L"Pomodoro", L"LongBreak", std::to_wstring(s.pomoLong).c_str(), f);
+    WritePrivateProfileStringW(L"Clipboard", L"History", s.clipHistory ? L"1" : L"0", f);
+    WritePrivateProfileStringW(L"Clipboard", L"Max", std::to_wstring(s.clipMax).c_str(), f);
+    WritePrivateProfileStringW(L"Clipboard", L"Remember", s.clipRemember ? L"1" : L"0", f);
     WritePrivateProfileStringW(L"Water", L"Reminders", s.waterRemind ? L"1" : L"0", f);
     WritePrivateProfileStringW(L"Water", L"Goal", std::to_wstring(s.waterGoal).c_str(), f);
     WritePrivateProfileStringW(L"Water", L"Cup", std::to_wstring(s.waterCup).c_str(), f);

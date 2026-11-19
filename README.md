@@ -36,6 +36,7 @@ background polling: when the notch is closed, Perch is asleep until something ac
 | **Water** | Tap + for each cup and watch today's total fill up toward your goal (1.5–3 L). Optional reminders spread across your active hours nudge you only when you're behind; *Drank* or *Later* right on the pop-up. A Water ring for the closed notch, too. |
 | **Calendar** | Month and week views on the To-do page, from your own Google Calendar iCal link. Refreshes every 30 minutes. |
 | **Shelf** | Drop files on the notch to keep them handy, then drag them out into any app later. Survives restarts. |
+| **Clipboard history** | Turn it on and the Shelf gets a Clipboard tab with the text you copy, newest first: click one to copy it again. Copies that password managers mark as private are skipped. Optionally kept after a restart, encrypted for your Windows account. Off by default. |
 | **Pop-ups** | Volume, brightness, output device, battery (charging, low, full), Caps Lock, input language, Wi-Fi and Bluetooth headsets. Each can be turned off. |
 | **Mascot** | Leave the PC alone for 15 seconds and a little friend appears in the notch. It looks around, dozes off and wakes up when you're back. Seven styles: the Falcon, Ember, Mint leaf, Cyclops, Visor bot, Sunny and Moonlight. |
 | **Settings** | A settings window (tray icon, right-click → *Settings…*, or the gear on the page bar). Everything is also in a commented `settings.ini` that applies the moment you save it. |
@@ -68,6 +69,7 @@ if you add a calendar link. Everything it keeps stays in `%APPDATA%\Perch`:
 | `calendar.ics` | The last calendar download |
 | `focus.txt` | Pomodoro sessions and focus minutes per day |
 | `water.txt` | Water per day, in ml |
+| `clipboard.dat` | Clipboard history, only if you turn on *Keep after restart*; encrypted for your Windows account |
 
 *Start with Windows* adds `Perch` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
 

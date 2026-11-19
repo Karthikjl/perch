@@ -40,7 +40,11 @@ struct Settings {
     int waterGoal = 2000;        // Goal, ml: 1500, 2000, 2500 or 3000
     int waterCup = 250;          // Cup, ml: what one tap of "+" adds (100-1000)
     int waterFrom = 8 * 60, waterUntil = 17 * 60; // From / Until, minutes since midnight
-    bool shelfEmpty = false;     // Shelf: "Empty shelf at start"
+    bool shelfEmpty = false;
+    // Clipboard history in the Shelf. [Clipboard]
+    bool clipHistory = false;    // History: keep the text you copy
+    int clipMax = 20;            // Max: items kept, 5-50
+    bool clipRemember = false;   // Remember: keep them after a restart (encrypted for this Windows account)     // Shelf: "Empty shelf at start"
     std::wstring pageOrder = L"music,pomodoro,water,shelf,todo"; // [Pages] Order
     std::wstring pagesHidden = L"widgets";                        // [Pages] Hidden
 };

@@ -17,7 +17,7 @@ if exist "%MINGW%\bin\g++.exe" (
 where cl >nul 2>nul && (
   rem /i . lets perch.rc find assets\perch.ico from the project folder.
   rc /nologo /i . /fo build\perch.res src\perch.rc || exit /b 1
-  cl /nologo /O2 /EHsc /std:c++17 /DUNICODE /D_UNICODE /Fobuild\ %SOURCES% build\perch.res /link /SUBSYSTEM:WINDOWS /OUT:build\Perch.exe runtimeobject.lib wlanapi.lib winmm.lib winhttp.lib
+  cl /nologo /O2 /EHsc /std:c++17 /DUNICODE /D_UNICODE /Fobuild\ %SOURCES% build\perch.res /link /SUBSYSTEM:WINDOWS /OUT:build\Perch.exe runtimeobject.lib wlanapi.lib winmm.lib winhttp.lib crypt32.lib
   goto :eof
 )
 echo No C++ compiler found. Run: winget install BrechtSanders.WinLibs.POSIX.UCRT
@@ -27,7 +27,7 @@ exit /b 1
 set "PATH=%MS%\bin;%PATH%"
 "%MS%\bin\windres.exe" --include-dir=. src\perch.rc -O coff -o build\perch.res.o
 if errorlevel 1 (echo Icon resource failed.& exit /b 1)
-"%MS%\bin\g++.exe" "-B%MS%\x86_64-w64-mingw32\lib\\" -O2 -s -std=c++17 -Wall -municode -mwindows %SOURCES% build\perch.res.o -o build\Perch.exe -ld2d1 -ldwrite -lole32 -ladvapi32 -lshell32 -lruntimeobject -ldwmapi -lwlanapi -lwinmm -lwinhttp -static
+"%MS%\bin\g++.exe" "-B%MS%\x86_64-w64-mingw32\lib\\" -O2 -s -std=c++17 -Wall -municode -mwindows %SOURCES% build\perch.res.o -o build\Perch.exe -ld2d1 -ldwrite -lole32 -ladvapi32 -lshell32 -lruntimeobject -ldwmapi -lwlanapi -lwinmm -lwinhttp -lcrypt32 -static
 if errorlevel 1 (echo Build failed.& exit /b 1)
 echo Built build\Perch.exe
 goto :eof

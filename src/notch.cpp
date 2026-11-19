@@ -26,6 +26,7 @@
 #include <endpointvolume.h>
 #include <audiopolicy.h>
 #include <shlobj.h>
+#include <wincrypt.h>
 #include <shobjidl.h>
 #include <wincodec.h>
 #include <wlanapi.h>
@@ -131,6 +132,7 @@ enum {
     WM_APP_CAL_DONE = WM_APP + 30,      // calendar download finished: lp = CalJob*
     WM_APP_TRAY = WM_APP + 31,          // the tray icon was clicked
     WM_APP_STRAY = WM_APP + 32,
+    WM_APP_CLIP = WM_APP + 34,          // tests: wp 0 = items; 1 = show tab lp (0 Files, 1 Clipboard)
     WM_APP_WATER = WM_APP + 33,         // tests: wp 0 = today's ml; 1 = add lp ml (may be < 0); 2 = reminder check as if the minute were lp
                                         //        (returns 1 if the water pop-up shows); 3 = next reminder minute (-1: none)         // tests: pixels of the window that aren't clear, outside the area the notch drew last frame
 };
@@ -140,7 +142,8 @@ enum { TIMER_ANIM = 1, TIMER_CLOCK = 2, TIMER_FLASH = 3, TIMER_SETTINGS = 6, TIM
        TIMER_PET_IDLE = 12, TIMER_PET_ANIM = 13, // mascot: away 15 s / its frames
        TIMER_CAL = 14,                           // calendar: download again
        TIMER_PEEK = 15,                          // hover: open after the peek
-       TIMER_WATER = 16 };                       // water: the next reminder (or midnight)                        // hover: open after the peek
+       TIMER_WATER = 16,                         // water: the next reminder (or midnight)
+       TIMER_CLIP = 17 };                        // clipboard: "Copied" goes                       // water: the next reminder (or midnight)                        // hover: open after the peek
 enum { CMD_QUIT = 100, CMD_AUTOSTART = 101,
        CMD_MEDIA_PLAYPAUSE = 104, CMD_MEDIA_NEXT = 105, CMD_MEDIA_PREV = 106, CMD_SHELF_CLEAR = 107,
        CMD_SETTINGS = 109, CMD_POMO_TOGGLE = 110, CMD_POMO_RESET = 111,
@@ -852,10 +855,18 @@ enum Hot { HOT_NONE = -1, HOT_ARROW_L = 0, HOT_ARROW_R, HOT_DOTS, HOT_LYRICS, HO
            HOT_TODO_SAVE, HOT_TODO_CLEAR, HOT_ACT_A, HOT_ACT_B, // HOT_ACT_*: buttons on a reminder pop-up
            HOT_CAL_PREV = 53, HOT_CAL_NEXT, HOT_CAL_TITLE, // calendar: previous / next month (week), Month <-> Week
            HOT_WATER_ADD = 56, HOT_WATER_UNDO,             // water page: + a cup, take one back
+           HOT_SHELF_TAB0 = 58, HOT_CLIP_CLEAR = 9,         // Shelf: Files / Clipboard tabs (+ tab); Clear the clipboard list
+           HOT_CLIP_ROW0 = 280, HOT_CLIP_DEL0 = 290,        // clipboard rows: copy, remove (+ row)
            HOT_TODO_ROW0 = 60, HOT_TODO_UP0 = 100, HOT_TODO_DOWN0 = 140, HOT_TODO_DEL0 = 180, HOT_TODO_MAX = 220, // + row
            HOT_CAL_DAY0 = 230, HOT_CAL_DAYMAX = 272 }; // + calendar cell
 static D2D1_POINT_2F TodoHotCenter(int hot); // To-do page and reminder pop-up controls
 static float PX() { return (kWinW - kExpW) / 2; }
+static const int kClipRows = 3;
+// layout: a small Files / Clipboard switch sitting on the top edge of the shelf's zone, three rows under it
+static D2D1_RECT_F ShelfTabRect(int tab) { float cx = kWinW / 2; return tab ? D2D1::RectF(cx - 8, 48, cx + 66, 64) : D2D1::RectF(cx - 64, 48, cx - 12, 64); }
+static D2D1_RECT_F ClipClearRect() { float right = PX() + kExpW - 40; return D2D1::RectF(right - 44, 48, right, 64); }
+static D2D1_RECT_F ClipRowRect(int row) { float px = PX(); return D2D1::RectF(px + 32, 70 + row * 26.0f, px + kExpW - 32, 94 + row * 26.0f); }
+static D2D1_POINT_2F ClipDelCenter(int row) { D2D1_RECT_F r = ClipRowRect(row); return D2D1::Point2F(r.right - 13, (r.top + r.bottom) / 2); }
 static D2D1_POINT_2F HotCenter(int hot) {
     float px = PX(), cx = kWinW / 2;
     switch (hot) {
@@ -871,6 +882,10 @@ static D2D1_POINT_2F HotCenter(int hot) {
     case HOT_WATER_ADD: return D2D1::Point2F(px + 245, 105);
     case HOT_WATER_UNDO: return D2D1::Point2F(px + 322, 105);
     }
+    if (hot == HOT_SHELF_TAB0 || hot == HOT_SHELF_TAB0 + 1) { D2D1_RECT_F r = ShelfTabRect(hot - HOT_SHELF_TAB0); return D2D1::Point2F((r.left + r.right) / 2, (r.top + r.bottom) / 2); }
+    if (hot == HOT_CLIP_CLEAR) { D2D1_RECT_F r = ClipClearRect(); return D2D1::Point2F((r.left + r.right) / 2, (r.top + r.bottom) / 2); }
+    if (hot >= HOT_CLIP_ROW0 && hot < HOT_CLIP_ROW0 + kClipRows) { D2D1_RECT_F r = ClipRowRect(hot - HOT_CLIP_ROW0); return D2D1::Point2F(r.left + 60, (r.top + r.bottom) / 2); }
+    if (hot >= HOT_CLIP_DEL0 && hot < HOT_CLIP_DEL0 + kClipRows) return ClipDelCenter(hot - HOT_CLIP_DEL0);
     if ((hot >= HOT_TODO_ADD && hot < HOT_TODO_MAX) || (hot >= HOT_CAL_DAY0 && hot < HOT_CAL_DAYMAX)) return TodoHotCenter(hot);
     if (hot >= HOT_ICON0 || hot == HOT_ICON_SETTINGS) { // icon bar: page icons, a divider, then settings
         int n = g_pageN + 1, i = hot == HOT_ICON_SETTINGS ? g_pageN : hot - HOT_ICON0; // HOT_ICON0 + slot
@@ -880,7 +895,7 @@ static D2D1_POINT_2F HotCenter(int hot) {
     return D2D1::Point2F(-100, -100);
 }
 static D2D1_RECT_F WaterAddRect() { float px = PX(); return D2D1::RectF(px + 194, 92, px + 296, 118); }
-static float HotRadius(int hot) { return hot == HOT_POMO_RESET || hot == HOT_WATER_UNDO ? 11 : hot == HOT_ARROW_L || hot == HOT_ARROW_R ? 12 : hot >= HOT_ICON_SETTINGS ? 12 : kCtlR; }
+static float HotRadius(int hot) { return hot >= HOT_CLIP_DEL0 && hot < HOT_CLIP_DEL0 + kClipRows ? 8 : hot == HOT_POMO_RESET || hot == HOT_WATER_UNDO ? 11 : hot == HOT_ARROW_L || hot == HOT_ARROW_R ? 12 : hot >= HOT_ICON_SETTINGS ? 12 : kCtlR; }
 static D2D1_RECT_F DotsRect() { // area that reveals the page icons
     float cx = kWinW / 2, w = 28.0f * g_pageN + 36 + 36;
     return D2D1::RectF(cx - w / 2, kDotsY - 8, cx + w / 2, kDotsY + 8 + 30 * g_iconBar);
@@ -1006,7 +1021,9 @@ static D2D1_RECT_F ShelfClearRect() {
     float right = ShelfZone().right - 10;
     return D2D1::RectF(right - 60, 128, right, 144);
 }
-static bool ShelfInteractive() { return g_t >= 0.99f && g_page == PAGE_SHELF && g_pageT >= 0.99f && !g_shelf.empty() && !g_toast; }
+static int g_shelfTab;
+static int g_shelfTabShown() { return g_set.clipHistory ? g_shelfTab : 0; }
+static bool ShelfInteractive() { return g_t >= 0.99f && g_page == PAGE_SHELF && g_pageT >= 0.99f && !g_shelf.empty() && !g_toast && g_shelfTabShown() == 0; }
 // Remove button: a small round "x" on the top-right corner of each tile's icon.
 static const float kCloseR = 8;
 static D2D1_POINT_2F ShelfCloseCenter(int slot) {
@@ -1159,6 +1176,171 @@ static float TextWidth(const wchar_t* s, IDWriteTextFormat* f) { // DIPs, one li
 
 static const D2D1_COLOR_F kRed = {0.93f, 0.25f, 0.22f, 1};
 static const D2D1_COLOR_F kGreen = {0.19f, 0.82f, 0.35f, 1};
+// ---- Clipboard history: a Clipboard tab on the Shelf page ----
+// While it's on, Perch listens for clipboard changes (AddClipboardFormatListener: no polling) and keeps
+// the text you copy, newest first. Copies that ask to stay out of history (password managers mark them
+// with ExcludeClipboardContentFromMonitorProcessing, CanIncludeInClipboardHistory = 0 or
+// Clipboard Viewer Ignore) are skipped. With Remember on, the list is saved encrypted for this Windows
+// account (DPAPI) in clipboard.dat; otherwise it lives only in memory.
+static std::vector<std::wstring> g_clip;
+                                    // g_shelfTab (above): 0 Files, 1 Clipboard
+static int g_clipScroll = 0;        // first row shown
+static int g_clipCopied = -1;       // row that just shows "Copied"
+static DWORD g_clipOwnSeq = 0;      // clipboard sequence number of our own copy (not added again)
+static bool g_clipListening = false;
+static bool g_clipLoaded = false;   // clipboard.dat read (once the settings say whether to)
+static std::wstring ClipFile() { return DataDir() + L"\\clipboard.dat"; }
+static void SaveClip() {
+    if (!g_set.clipRemember) { DeleteFileW(ClipFile().c_str()); return; }
+    std::vector<BYTE> raw;
+    for (const std::wstring& s : g_clip) {
+        DWORD n = (DWORD)s.size();
+        raw.insert(raw.end(), (BYTE*)&n, (BYTE*)&n + 4);
+        raw.insert(raw.end(), (const BYTE*)s.data(), (const BYTE*)(s.data() + n));
+    }
+    DATA_BLOB in = {(DWORD)raw.size(), raw.data()}, out = {};
+    if (!CryptProtectData(&in, L"Perch clipboard", nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &out)) return;
+    if (FILE* f = _wfopen(ClipFile().c_str(), L"wb")) { fwrite(out.pbData, 1, out.cbData, f); fclose(f); }
+    LocalFree(out.pbData);
+}
+static void LoadClip() {
+    g_clip.clear();
+    if (!g_set.clipRemember) return;
+    FILE* f = _wfopen(ClipFile().c_str(), L"rb");
+    if (!f) return;
+    std::vector<BYTE> enc;
+    BYTE buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof buf, f)) > 0) enc.insert(enc.end(), buf, buf + n);
+    fclose(f);
+    DATA_BLOB in = {(DWORD)enc.size(), enc.data()}, out = {};
+    if (enc.empty() || !CryptUnprotectData(&in, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &out)) return;
+    for (DWORD p = 0; p + 4 <= out.cbData && (int)g_clip.size() < g_set.clipMax;) {
+        DWORD len;
+        memcpy(&len, out.pbData + p, 4);
+        p += 4;
+        if (p + len * 2 > out.cbData) break;
+        g_clip.emplace_back((const wchar_t*)(out.pbData + p), len);
+        p += len * 2;
+    }
+    LocalFree(out.pbData);
+}
+static bool ClipExcluded() { // the copy asked to stay out of clipboard history
+    static UINT ex = RegisterClipboardFormatW(L"ExcludeClipboardContentFromMonitorProcessing");
+    static UINT can = RegisterClipboardFormatW(L"CanIncludeInClipboardHistory");
+    static UINT ign = RegisterClipboardFormatW(L"Clipboard Viewer Ignore");
+    if (IsClipboardFormatAvailable(ex) || IsClipboardFormatAvailable(ign)) return true;
+    if (IsClipboardFormatAvailable(can))
+        if (HANDLE h = GetClipboardData(can))
+            if (const DWORD* v = (const DWORD*)GlobalLock(h)) { bool no = *v == 0; GlobalUnlock(h); return no; }
+    return false;
+}
+static void OnClipboardChanged() {
+    if (!g_set.clipHistory || GetClipboardSequenceNumber() == g_clipOwnSeq) return;
+    if (!OpenClipboard(g_hwnd)) return;
+    std::wstring text;
+    if (!ClipExcluded())
+        if (HANDLE h = GetClipboardData(CF_UNICODETEXT))
+            if (const wchar_t* p = (const wchar_t*)GlobalLock(h)) { text.assign(p, wcsnlen(p, 20000)); GlobalUnlock(h); }
+    CloseClipboard();
+    if (text.find_first_not_of(L" \t\r\n") == std::wstring::npos) return;
+    g_clip.erase(std::remove(g_clip.begin(), g_clip.end(), text), g_clip.end()); // copied again: to the top
+    g_clip.insert(g_clip.begin(), text);
+    if ((int)g_clip.size() > g_set.clipMax) g_clip.resize(g_set.clipMax);
+    g_clipCopied = -1;
+    SaveClip();
+}
+static void ClipListen() { // follow the setting
+    if (g_set.clipHistory && !g_clipLoaded) LoadClip(); // first time on (at start, once the settings are read)
+    g_clipLoaded = true;
+    if (g_set.clipHistory && !g_clipListening) g_clipListening = AddClipboardFormatListener(g_hwnd) != 0;
+    else if (!g_set.clipHistory && g_clipListening) { RemoveClipboardFormatListener(g_hwnd); g_clipListening = false; }
+    if (!g_set.clipHistory) { g_shelfTab = 0; g_clip.clear(); DeleteFileW(ClipFile().c_str()); }
+    else {
+        if ((int)g_clip.size() > g_set.clipMax) g_clip.resize(g_set.clipMax);
+        SaveClip(); // Remember on: write it; off: the file goes
+    }
+}
+static void ClipCopy(int i) { // put an item back on the clipboard
+    if (i < 0 || i >= (int)g_clip.size() || !OpenClipboard(g_hwnd)) return;
+    EmptyClipboard();
+    const std::wstring& s = g_clip[i];
+    if (HGLOBAL m = GlobalAlloc(GMEM_MOVEABLE, (s.size() + 1) * sizeof(wchar_t))) {
+        memcpy(GlobalLock(m), s.c_str(), (s.size() + 1) * sizeof(wchar_t));
+        GlobalUnlock(m);
+        if (!SetClipboardData(CF_UNICODETEXT, m)) GlobalFree(m);
+    }
+    CloseClipboard();
+    g_clipOwnSeq = GetClipboardSequenceNumber();
+    g_clipCopied = i;
+    SetTimer(g_hwnd, TIMER_CLIP, 1400, nullptr); // "Copied" for a moment
+}
+static void ClipRemove(int i) {
+    if (i < 0 || i >= (int)g_clip.size()) return;
+    g_clip.erase(g_clip.begin() + i);
+    g_clipScroll = std::max(0, std::min(g_clipScroll, (int)g_clip.size() - kClipRows));
+    g_clipCopied = -1;
+    SaveClip();
+}
+static void ClipClear() { g_clip.clear(); g_clipScroll = 0; g_clipCopied = -1; SaveClip(); }
+
+static bool ClipActive() { return g_set.clipHistory && g_shelfTab == 1; }
+
+static void DrawShelfTabs(float a) {
+    float cx = kWinW / 2;
+    D2D1_RECT_F pill = D2D1::RectF(cx - 68, 46, cx + 70, 66);
+    g_brush->SetColor(WithAlpha(g_bg, a)); // covers the zone's edge under it
+    g_rt->FillRoundedRectangle(D2D1::RoundedRect(pill, 10, 10), g_brush);
+    g_brush->SetColor(WithAlpha(g_fg, 0.07f * a));
+    g_rt->FillRoundedRectangle(D2D1::RoundedRect(pill, 10, 10), g_brush);
+    for (int t = 0; t < 2; t++) {
+        D2D1_RECT_F r = ShelfTabRect(t);
+        bool sel = g_shelfTab == t;
+        if (sel || g_hot == HOT_SHELF_TAB0 + t) {
+            g_brush->SetColor(WithAlpha(g_fg, (sel ? 0.18f : 0.09f) * a));
+            g_rt->FillRoundedRectangle(D2D1::RoundedRect(r, 8, 8), g_brush);
+        }
+        Text(t ? L"Clipboard" : L"Files", g_fmtTile, r, WithAlpha(sel ? g_fg : g_grey, a));
+    }
+    if (g_shelfTab == 1 && !g_clip.empty())
+        Text(L"Clear", g_fmtTile, ClipClearRect(), WithAlpha(g_hot == HOT_CLIP_CLEAR ? g_fg : g_grey, a));
+}
+static void DrawClipList(float a) {
+    if (g_clip.empty()) {
+        D2D1_RECT_F zone = D2D1::RectF(PX() + 32, 58, PX() + kExpW - 32, 147);
+        g_brush->SetColor(WithAlpha(g_fg, 0.28f * a));
+        g_rt->DrawRoundedRectangle(D2D1::RoundedRect(zone, 14, 14), g_brush, 1.2f, g_dash);
+        Text(L"Text you copy shows up here", g_fmtDrop, D2D1::RectF(zone.left, zone.top + 28, zone.right, zone.top + 50), WithAlpha(g_fg, a));
+        Text(L"Click an item to copy it again", g_fmtTile, D2D1::RectF(zone.left, zone.top + 50, zone.right, zone.top + 66), WithAlpha(g_grey, a));
+        return;
+    }
+    for (int row = 0; row < kClipRows; row++) {
+        int i = g_clipScroll + row;
+        if (i >= (int)g_clip.size()) break;
+        D2D1_RECT_F r = ClipRowRect(row);
+        g_brush->SetColor(WithAlpha(g_fg, (g_hot == HOT_CLIP_ROW0 + row ? 0.12f : 0.06f) * a));
+        g_rt->FillRoundedRectangle(D2D1::RoundedRect(r, 8, 8), g_brush);
+        std::wstring line = g_clip[i].substr(0, 120);
+        for (wchar_t& c : line) if (c == L'\r' || c == L'\n' || c == L'\t') c = L' ';
+        D2D1_RECT_F tr = D2D1::RectF(r.left + 10, r.top + 4, r.right - 30, r.bottom - 4);
+        g_rt->PushAxisAlignedClip(tr, D2D1_ANTIALIAS_MODE_ALIASED);
+        Text(line.c_str(), g_fmtMeta, tr, WithAlpha(g_fg, a));
+        g_rt->PopAxisAlignedClip();
+        if (g_clipCopied == i) {
+            g_fmtMeta->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+            Text(L"Copied", g_fmtMeta, D2D1::RectF(r.right - 90, r.top + 4, r.right - 10, r.bottom - 4), WithAlpha(g_grey, a));
+            g_fmtMeta->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        } else {
+            D2D1_POINT_2F c = ClipDelCenter(row);
+            bool hot = g_hot == HOT_CLIP_DEL0 + row;
+            if (hot) { g_brush->SetColor(WithAlpha(kRed, 0.9f * a)); g_rt->FillEllipse(D2D1::Ellipse(c, 8, 8), g_brush); }
+            g_brush->SetColor(WithAlpha(hot ? g_fg : g_grey, a));
+            g_rt->DrawLine(D2D1::Point2F(c.x - 3, c.y - 3), D2D1::Point2F(c.x + 3, c.y + 3), g_brush, 1.4f, g_round);
+            g_rt->DrawLine(D2D1::Point2F(c.x + 3, c.y - 3), D2D1::Point2F(c.x - 3, c.y + 3), g_brush, 1.4f, g_round);
+        }
+    }
+}
+
 
 // ---- 1.7 Glass: Windows blurs what's behind a window, but a per-pixel-alpha window can't shape
 // that blur. So a plain helper window, cut to the pill's shape, sits just under the notch and
@@ -2803,7 +2985,9 @@ static void DrawPage(int page, float a, float dx) {
     else if (page == PAGE_WATER) DrawWaterPage(a);
     else if (page == PAGE_SHELF) {
         Text(L"Shelf", g_fmtHdr, D2D1::RectF(PX() + 32, 21.6f, PX() + 110, 41.6f), WithAlpha(g_fg, a));
-        DrawShelf(a);
+        if (ClipActive() && !g_dragOver) DrawClipList(a);
+        else DrawShelf(a);
+        if (g_set.clipHistory && !g_dragOver) DrawShelfTabs(a);
     } else DrawComingSoonPage(page, a);
     g_rt->SetTransform(D2D1::Matrix3x2F::Translation(-g_baseX, g_offY));
 }
@@ -3314,7 +3498,7 @@ public:
     STDMETHODIMP DragEnter(IDataObject* d, DWORD, POINTL, DWORD* effect) override {
         m_accept = !g_draggingOut && HasFiles(d); // not our own tiles coming back
         *effect = m_accept ? DROPEFFECT_COPY : DROPEFFECT_NONE;
-        if (m_accept) { g_dragOver = true; GoPage(PAGE_SHELF, 1); g_pageT = 1; UpdateTarget(); Render(); }
+        if (m_accept) { g_dragOver = true; g_shelfTab = 0; GoPage(PAGE_SHELF, 1); g_pageT = 1; UpdateTarget(); Render(); }
         return S_OK;
     }
     STDMETHODIMP DragOver(DWORD, POINTL, DWORD* effect) override {
@@ -3474,7 +3658,7 @@ static void ApplySettings(bool announce, bool quiet = false) {
         CreateSurface();
     }
     ArmMinuteTimer();
-    if (g_hwnd) ArmWaterTimer();
+    if (g_hwnd) { ArmWaterTimer(); ClipListen(); }
     UpdateKeyboardHook();
     SetGlassColours(g_set.glass);
     SetBlur(g_set.glass);
@@ -3756,6 +3940,17 @@ static int HitHot(float x, float y) {
         if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) return HOT_WATER_ADD;
         if (over(HOT_WATER_UNDO)) return HOT_WATER_UNDO;
     }
+    if (g_page == PAGE_SHELF && g_set.clipHistory && !g_toast) {
+        for (int t = 0; t < 2; t++) if (InRect(ShelfTabRect(t), x, y)) return HOT_SHELF_TAB0 + t;
+        if (ClipActive()) {
+            if (!g_clip.empty() && InRect(ClipClearRect(), x, y)) return HOT_CLIP_CLEAR;
+            for (int row = 0; row < kClipRows && g_clipScroll + row < (int)g_clip.size(); row++) {
+                if (over(HOT_CLIP_DEL0 + row)) return HOT_CLIP_DEL0 + row;
+                if (InRect(ClipRowRect(row), x, y)) return HOT_CLIP_ROW0 + row;
+            }
+            return HOT_NONE;
+        }
+    }
     if (ShelfInteractive()) {
         auto in = [&](D2D1_RECT_F r) { return x >= r.left && x < r.right && y >= r.top && y < r.bottom; };
         if (in(ShelfClearRect())) return HOT_SHELF_CLEAR;
@@ -3782,6 +3977,8 @@ static void ClickHot(int hot) {
     case HOT_NEXT: HandleCommand(CMD_MEDIA_NEXT); break;
     case HOT_VOLUME: ToggleOutputMute(); break;
     case HOT_SHELF_CLEAR: ShelfClear(); break;
+    case HOT_SHELF_TAB0: case HOT_SHELF_TAB0 + 1: g_shelfTab = hot - HOT_SHELF_TAB0; g_clipScroll = 0; break;
+    case HOT_CLIP_CLEAR: ClipClear(); break;
     case HOT_POMO_START: PomoToggle(); break;
     case HOT_POMO_RESET: PomoReset(); break;
     case HOT_WATER_ADD: WaterAdd(g_set.waterCup); break;
@@ -3791,7 +3988,9 @@ static void ClickHot(int hot) {
     case HOT_CAL_PREV: case HOT_CAL_NEXT: case HOT_CAL_TITLE: TodoClick(hot); break;
     case HOT_ICON_SETTINGS: OpenSettings(); break;
     default:
-        if (hot >= HOT_ICON0 && hot < HOT_ICON0 + g_pageN) GoPage(g_pages[hot - HOT_ICON0], hot - HOT_ICON0 > PageSlot(g_page) ? 1 : -1);
+        if (hot >= HOT_CLIP_ROW0 && hot < HOT_CLIP_ROW0 + kClipRows) ClipCopy(g_clipScroll + hot - HOT_CLIP_ROW0);
+        else if (hot >= HOT_CLIP_DEL0 && hot < HOT_CLIP_DEL0 + kClipRows) ClipRemove(g_clipScroll + hot - HOT_CLIP_DEL0);
+        else if (hot >= HOT_ICON0 && hot < HOT_ICON0 + g_pageN) GoPage(g_pages[hot - HOT_ICON0], hot - HOT_ICON0 > PageSlot(g_page) ? 1 : -1);
         else if ((hot >= HOT_TODO_ROW0 && hot < HOT_TODO_MAX) || (hot >= HOT_CAL_DAY0 && hot < HOT_CAL_DAYMAX)) TodoClick(hot);
     }
     Render();
@@ -3868,6 +4067,16 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (InRect(TodoPanel(), pt.x / g_scale, pt.y / g_scale - g_offY)) {
                 int d = GET_WHEEL_DELTA_WPARAM(wp) > 0 ? -1 : 1;
                 g_todoScroll = std::max(0, std::min(g_todoScroll + d, (int)g_tasks.size() - kRowsShown));
+                Render();
+                return 0;
+            }
+        }
+        if (g_page == PAGE_SHELF && ClipActive() && (int)g_clip.size() > kClipRows) {
+            POINT pt = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+            ScreenToClient(hwnd, &pt);
+            if (pt.y / g_scale - g_offY >= 56) {
+                int d = GET_WHEEL_DELTA_WPARAM(wp) > 0 ? -1 : 1;
+                g_clipScroll = std::max(0, std::min(g_clipScroll + d, (int)g_clip.size() - kClipRows));
                 Render();
                 return 0;
             }
@@ -3968,6 +4177,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == TIMER_ANIM) OnAnimTick();
         else if (wp == TIMER_CLOCK) { if (!g_hidden) Render(); }
         else if (wp == TIMER_TODO) { KillTimer(hwnd, TIMER_TODO); CheckTaskReminders(NowMinute()); if (!g_hidden) Render(); }
+        else if (wp == TIMER_CLIP) { KillTimer(hwnd, TIMER_CLIP); g_clipCopied = -1; if (!g_hidden) Render(); }
         else if (wp == TIMER_WATER) { KillTimer(hwnd, TIMER_WATER); OnWaterTimer(); if (!g_hidden) Render(); }
         else if (wp == TIMER_POMO) {
             if (PomoLeftMs() > 0) PomoArm(); // fired a little early: wait for the rest
@@ -4091,6 +4301,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if ((g_bits[y * g_pxW + x] >> 24) && (y >= b || x < l || x >= r)) n++;
         return n;
     }
+    case WM_CLIPBOARDUPDATE:
+        OnClipboardChanged();
+        if (!g_hidden && g_page == PAGE_SHELF && g_t > 0) Render();
+        return 0;
+    case WM_APP_CLIP:
+        if (wp == 1) { g_shelfTab = lp ? 1 : 0; g_clipScroll = 0; if (!g_hidden) Render(); }
+        return (LRESULT)g_clip.size();
     case WM_APP_WATER:
         if (wp == 0) return WaterToday();
         if (wp == 1) { WaterAdd((int)lp); if (!g_hidden) Render(); return WaterToday(); }
