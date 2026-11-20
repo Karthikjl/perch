@@ -48,7 +48,7 @@ struct SectionInfo { const wchar_t* name; const wchar_t* glyph; int color; bool 
 const SectionInfo kSections[SEC_COUNT] = {
     {L"General", L"\xE713", 0x8F8F94, false},    {L"Display", L"\xE7F4", 0x5E5CE5, false},
     {L"Pages", L"\xE8FD", 0x33ADE5, false},      {L"Appearance", L"\xE793", 0x424247, false},
-    {L"Music and lyrics", L"\xEC4F", 0xFF385E, true}, {L"Widgets", L"\xF0E2", 0x0A85FF, true},
+    {L"Music and lyrics", L"\xEC4F", 0xFF385E, false}, {L"Widgets", L"\xF0E2", 0x0A85FF, true},
     {L"Ask Perch", L"\xE8BD", 0x6B54FF, false},   {L"To-do", L"\xE73E", 0x30C759, false},
     {L"Pomodoro", L"\xE916", 0x7D66FA, false},   {L"Water", L"\xEB42", 0x0A85FF, false},
     {L"Shelf", L"\xE7B8", 0xFFB233, false},      {L"HUD & popups", L"\xEA8F", 0x30ABDB, false},
@@ -71,6 +71,7 @@ enum Id {
     C_HISTORY, C_MAX, C_REMEMBER,
     T_REMIND,
     K_PASTE, K_REMOVE, K_MODEL, K_HOTKEY, K_HOTKEY_OFF,
+    M_LYRICS, M_EARLIER,
     I_SOON, // a Coming soon control (never hit)
 };
 
@@ -160,6 +161,7 @@ bool GetBool(int id) {
     case H_BT: return g_s.popBluetooth;
     case W_REMIND: return g_s.waterRemind;
     case C_HISTORY: return g_s.clipHistory;
+    case M_LYRICS: return g_s.lyrics;
     case C_REMEMBER: return g_s.clipRemember;
     }
     return false;
@@ -186,6 +188,7 @@ void FlipBool(int id) {
     case H_BT: g_s.popBluetooth = !g_s.popBluetooth; break;
     case W_REMIND: g_s.waterRemind = !g_s.waterRemind; break;
     case C_HISTORY: g_s.clipHistory = !g_s.clipHistory; break;
+    case M_LYRICS: g_s.lyrics = !g_s.lyrics; break;
     case C_REMEMBER: g_s.clipRemember = !g_s.clipRemember; break;
     default: return;
     }
@@ -201,6 +204,7 @@ int GetChoice(int id) {
     case T_VIEW: return g_s.calWeek ? 1 : 0;
     case D_RING: return g_s.ring == RING_BATTERY ? 0 : g_s.ring == RING_WATER ? 1 : g_s.ring == RING_TASKS ? 2 : 3;
     case W_GOAL: return (g_s.waterGoal - 1500) / 500;
+    case M_EARLIER: return g_s.lyricsEarlier >= 1000 ? 3 : g_s.lyricsEarlier >= 600 ? 2 : g_s.lyricsEarlier >= 300 ? 1 : 0;
     case T_REMIND: { static const int m[] = {-1, 0, 5, 10, 15, 30}; for (int i = 0; i < 6; i++) if (m[i] == g_s.calRemind) return i; return 3; }
     case A_STYLE: return g_s.style;
     case G_PETSTYLE: return g_s.mascotStyle;
@@ -218,6 +222,7 @@ void SetChoice(int id, int v) {
     case T_VIEW: g_s.calWeek = v == 1; break;
     case D_RING: g_s.ring = v == 0 ? RING_BATTERY : v == 1 ? RING_WATER : v == 2 ? RING_TASKS : RING_NONE; break;
     case W_GOAL: g_s.waterGoal = 1500 + 500 * v; break;
+    case M_EARLIER: { static const int ms[] = {0, 300, 600, 1000}; g_s.lyricsEarlier = ms[v < 0 ? 0 : v > 3 ? 3 : v]; break; }
     case T_REMIND: { static const int m[] = {-1, 0, 5, 10, 15, 30}; g_s.calRemind = m[v < 0 ? 0 : v > 5 ? 5 : v]; break; }
     case A_STYLE: g_s.style = v; break;
     default: return;
@@ -632,10 +637,10 @@ void BuildAppearance() {
           {RK_TOGGLE, L"Motion blur", L"A soft blur while the notch moves", I_SOON, true, {}, {}}});
 }
 void BuildMusic() {
-    Header(L"Music and lyrics", true);
+    Header(L"Music and lyrics", false);
     Label(L"Lyrics");
-    Card({{RK_TOGGLE, L"Show lyrics", L"Synced lyrics from LRCLIB", I_SOON, true, {}, {}},
-          {RK_SEGWIDE, L"Show lyrics earlier", L"Shift lyrics if they run behind the song", I_SOON, true, {L"Off", L"0.3 s", L"0.6 s", L"1 s"}, {}}});
+    Card({{RK_TOGGLE, L"Show lyrics", L"From LRCLIB: sends each song's title and artist", M_LYRICS, false, {}, {}},
+          {RK_SEGWIDE, L"Show lyrics earlier", L"Shift lyrics if they run behind the song", M_EARLIER, false, {L"Off", L"0.3 s", L"0.6 s", L"1 s"}, {}}});
 }
 void BuildWidgets() {
     Header(L"Widgets", true);
@@ -908,7 +913,7 @@ void Activate(const Hit& h) {
     case P_UP: MovePage(h.arg, -1); break;
     case P_DOWN: MovePage(h.arg, 1); break;
     case P_TOGGLE: MovePage(h.arg, 0); break;
-    case G_SIZE: case A_OPEN: case A_SPEED: case T_SNOOZE: case T_WEEK: case T_VIEW: case D_RING: case A_STYLE: case G_PETSTYLE: case W_GOAL: case T_REMIND: SetChoice(h.id, h.arg); break;
+    case G_SIZE: case A_OPEN: case A_SPEED: case T_SNOOZE: case T_WEEK: case T_VIEW: case D_RING: case A_STYLE: case G_PETSTYLE: case W_GOAL: case T_REMIND: case M_EARLIER: SetChoice(h.id, h.arg); break;
     case A_TINT: case O_FOCUS: case O_SHORT: case O_LONG: case W_CUP: case W_FROM: case W_UNTIL: case C_MAX: case K_MODEL: Step(h.id, h.arg); break;
     case T_PASTE: if (g_host.calPaste) g_host.calPaste(); break;
     case T_REFRESH: if (g_host.calRefresh) g_host.calRefresh(); break;

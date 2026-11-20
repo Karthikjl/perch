@@ -31,6 +31,7 @@ background polling: when the notch is closed, Perch is asleep until something ac
 |---|---|
 | **The notch** | A pill with the time and a battery ring, joined to the top edge (Classic) or floating just below it. Sizes 100–150%, a *Minimal* tab when nothing is playing, optional frosted *Glass*. Opens and closes with a soft spring. |
 | **Music** | Title, artist and cover art from any app in Windows' media controls (Spotify, browsers, Media Player…), a progress bar, previous / play-pause / next and mute. A mini cover and sound bars on the closed pill. |
+| **Lyrics** | Turn on *Show lyrics* (Settings → Music and lyrics) and the Music page shows the line being sung and the next one, in time with the song, from LRCLIB, a free lyrics database. Off by default: turning it on sends each song's title, artist and length to LRCLIB. |
 | **Pomodoro** | Four focus sessions with short breaks, then a long break (25 / 5 / 15 min, adjustable). A pop-up and a chime when each part ends; daily focus minutes are kept. |
 | **To-do** | Today's tasks with optional times and daily repeats. Reminders when a task starts and when its time is up, with snooze. |
 | **Water** | Tap + for each cup and watch today's total fill up toward your goal (1.5–3 L). Optional reminders spread across your active hours nudge you only when you're behind; *Drank* or *Later* right on the pop-up. A Water ring for the closed notch, too. |
@@ -60,7 +61,7 @@ Requires Windows 10 (2004 or later) or Windows 11, x64.
 ## Privacy
 
 Perch doesn't send anything anywhere unless you ask it to. It downloads your calendar only if you add a
-calendar link, and sends your Ask Perch questions to Google only if you add your own Gemini key (to the
+calendar link, looks up song lyrics on LRCLIB only if you turn lyrics on, and sends your Ask Perch questions to Google only if you add your own Gemini key (to the
 model you choose, using that key). Everything it keeps stays in `%APPDATA%\Perch`:
 
 | File | What's in it |
@@ -119,7 +120,7 @@ it matters, and skip rather than click into another app.
 - The brightness pop-up covers the built-in laptop display only.
 - Wired headphones on a shared jack may not trigger the output-device pop-up.
 - Pop-ups don't show while a full screen app is in front.
-- Some settings say *Coming soon*: lyrics, widgets and a few more are on the way.
+- Some settings say *Coming soon*: widgets and a few more are on the way.
 
 ## Contributing
 

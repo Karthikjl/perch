@@ -46,6 +46,7 @@
 #include "calendar.h"
 #include "mascot.h"
 #include "ask.h"
+#include "lyrics.h"
 
 #ifdef _MSC_VER
 #pragma comment(lib, "d2d1.lib")
@@ -135,6 +136,9 @@ enum {
     WM_APP_CAL_DONE = WM_APP + 30,      // calendar download finished: lp = CalJob*
     WM_APP_TRAY = WM_APP + 31,          // the tray icon was clicked
     WM_APP_STRAY = WM_APP + 32,
+    WM_APP_LYRICS_DONE = WM_APP + 37,   // a lyrics lookup finished: lp = LyricsJob*
+    WM_APP_LYRICS = WM_APP + 38,        // tests: wp 0 = status | lines << 4; 1 = look up the song in global atom lp ("title|artist|seconds");
+                                        //        2 = line index at lp ms (Earlier included); 3 = show the page as if the song were at lp ms (-1: real)
     WM_APP_ASK_DONE = WM_APP + 35,      // an Ask job finished: lp = AskJob*
     WM_APP_ASK = WM_APP + 36,           // tests: wp 0 = open | busy << 1 | has key << 2 | error << 3 | answer length << 8;
                                         //        1 = open Ask; 2 = models known; 3 = close; 4 = save the key in global atom lp
@@ -151,7 +155,8 @@ enum { TIMER_ANIM = 1, TIMER_CLOCK = 2, TIMER_FLASH = 3, TIMER_SETTINGS = 6, TIM
        TIMER_WATER = 16,                         // water: the next reminder (or midnight)
        TIMER_CLIP = 17,                          // clipboard: "Copied" goes
        TIMER_CALREM = 18,                        // calendar: the next event reminder
-       TIMER_ASKCOPY = 19 };                     // Ask: "Copied" goes
+       TIMER_ASKCOPY = 19,                       // Ask: "Copied" goes
+       TIMER_LYRIC = 20 };                       // lyrics: the next line (only while the Music page shows)                     // Ask: "Copied" goes
 static const int kAskHotkeyId = 1;           // RegisterHotKey id for the Ask Perch shortcut                      // calendar: the next event reminder                        // clipboard: "Copied" goes                       // water: the next reminder (or midnight)                        // hover: open after the peek
 enum { CMD_QUIT = 100, CMD_AUTOSTART = 101,
        CMD_MEDIA_PLAYPAUSE = 104, CMD_MEDIA_NEXT = 105, CMD_MEDIA_PREV = 106, CMD_SHELF_CLEAR = 107,
@@ -1563,13 +1568,80 @@ static void DrawTrayIcon(D2D1_POINT_2F c, float s, D2D1_COLOR_F col, D2D1_COLOR_
     FillTriangle(D2D1::Point2F(c.x, c.y + s * 0.02f), s * 0.42f, 2);
 }
 
+// ---- Synced lyrics (lyrics.cpp): only while turned on in Settings > Music and lyrics ----
+// When the song changes, a worker thread looks it up on LRCLIB (title, artist, length); the Music page then
+// shows the line being sung and the next one in place of the title, moving on with one timer per line while
+// the page is in view. Nothing is fetched or timed while lyrics are off or the notch is closed.
+enum LyricsStatus { LY_OFF = 0, LY_LOOKING, LY_FOUND, LY_NONE, LY_OFFLINE };
+static int g_lyStatus = LY_OFF;
+static std::vector<LyricLine> g_lyLines;
+static std::wstring g_lyKey;              // "title\nartist" the lines belong to (or are being looked up for)
+static bool g_lyView = true;              // the lyrics button: show lines (on) or the title (off)
+static int g_lyTestMs = -1;               // tests: pretend the song is at this position
+struct LyricsJob { std::wstring key, title, artist; int seconds; int status = 0; std::vector<LyricLine> lines; };
+static DWORD WINAPI LyricsThread(LPVOID p) {
+    LyricsJob* j = (LyricsJob*)p;
+    j->status = Lyrics_Fetch(j->title, j->artist, j->seconds, j->lines);
+    if (!PostMessageW(g_hwnd, WM_APP_LYRICS_DONE, 0, (LPARAM)j)) delete j;
+    return 0;
+}
+static void LyricsLookup(const std::wstring& title, const std::wstring& artist, int seconds) {
+    std::wstring key = title + L"\n" + artist;
+    if (key == g_lyKey && g_lyStatus != LY_OFFLINE) return;
+    g_lyKey = key;
+    g_lyLines.clear();
+    g_lyStatus = LY_LOOKING;
+    HANDLE t = CreateThread(nullptr, 64 * 1024, LyricsThread, new LyricsJob{key, title, artist, seconds}, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+    if (t) CloseHandle(t);
+    else g_lyStatus = LY_OFFLINE;
+}
+static void LyricsCheck() { // the song or the setting changed
+    if (!g_set.lyrics) { g_lyStatus = LY_OFF; g_lyLines.clear(); g_lyKey.clear(); return; }
+    if (!g_media.hasSession || !g_media.title[0]) return;
+    LyricsLookup(g_media.title, g_media.artist, (int)(g_media.length / 10000000));
+}
+static void OnLyricsDone(LyricsJob* j) {
+    if (j->key == g_lyKey && g_set.lyrics) {
+        g_lyStatus = j->status == 200 ? LY_FOUND : j->status == 0 ? LY_OFFLINE : LY_NONE;
+        g_lyLines.swap(j->lines);
+        if (!g_hidden) Render();
+    }
+    delete j;
+}
+static int LyricsLineAt(int ms) { // the line being sung at ms (-1: before the first)
+    ms += g_set.lyricsEarlier;
+    int i = -1;
+    for (int k = 0; k < (int)g_lyLines.size() && g_lyLines[k].ms <= ms; k++) i = k;
+    return i;
+}
+
 static void DrawMusicPage(float a) {
     float px = PX();
     D2D1_COLOR_F fg = WithAlpha(g_fg, a), grey = WithAlpha(g_grey, a);
     DrawArt(D2D1::RectF(px + 32, 24, px + 32 + kArtSize, 24 + kArtSize), 12, a);
     bool has = g_media.hasSession;
-    Text(has ? (g_media.title[0] ? g_media.title : L"Unknown title") : L"Not Playing", g_fmtTitle, D2D1::RectF(px + 110, 46, px + kExpW - 32, 66), fg);
-    if (has) Text(g_media.artist, g_fmtArtist, D2D1::RectF(px + 110, 66, px + kExpW - 32, 82), grey);
+    bool lyrics = has && g_set.lyrics && g_lyView && g_lyStatus == LY_FOUND && !g_lyLines.empty();
+    if (lyrics) { // the line being sung, and the next one under it
+        int ms = g_lyTestMs >= 0 ? g_lyTestMs : (int)(Media_Position(g_media) / 10000);
+        int i = LyricsLineAt(ms);
+        const std::wstring& cur = i < 0 ? std::wstring(g_media.title) : g_lyLines[i].text;
+        const std::wstring next = i + 1 < (int)g_lyLines.size() ? g_lyLines[i + 1].text : L"";
+        D2D1_RECT_F lr = D2D1::RectF(px + 110, 46, px + kExpW - 32, 66);
+        g_rt->PushAxisAlignedClip(D2D1::RectF(lr.left, 40, lr.right, 86), D2D1_ANTIALIAS_MODE_ALIASED);
+        Text(cur.empty() ? L"\x266A" : cur.c_str(), g_fmtTitle, lr, fg);
+        Text(next.empty() && i + 1 < (int)g_lyLines.size() ? L"\x266A" : next.c_str(), g_fmtArtist, D2D1::RectF(px + 110, 66, px + kExpW - 32, 82), grey);
+        g_rt->PopAxisAlignedClip();
+        if (g_media.playing && g_lyTestMs < 0 && i + 1 < (int)g_lyLines.size()) { // wake for the next line (only while this page is drawn)
+            int wait = g_lyLines[i + 1].ms - g_set.lyricsEarlier - ms;
+            SetTimer(g_hwnd, TIMER_LYRIC, (UINT)std::max(30, wait + 15), nullptr);
+        }
+    } else {
+        Text(has ? (g_media.title[0] ? g_media.title : L"Unknown title") : L"Not Playing", g_fmtTitle, D2D1::RectF(px + 110, 46, px + kExpW - 32, 66), fg);
+        const wchar_t* note = !has || !g_set.lyrics || !g_lyView ? nullptr
+                            : g_lyStatus == LY_LOOKING ? L"Looking for lyrics\x2026" : g_lyStatus == LY_NONE ? L"No synced lyrics for this song"
+                            : g_lyStatus == LY_OFFLINE ? L"Couldn't reach the lyrics service" : nullptr;
+        if (has) Text(note ? note : g_media.artist, g_fmtArtist, D2D1::RectF(px + 110, 66, px + kExpW - 32, 82), grey);
+    }
 
     // progress: elapsed, bar, remaining
     INT64 len = has ? g_media.length : 0, pos = has ? Media_Position(g_media) : 0;
@@ -1597,7 +1669,7 @@ static void DrawMusicPage(float a) {
         Text(g, f, D2D1::RectF(c.x - 16, c.y - 16, c.x + 16, c.y + 16), WithAlpha(g_fg, alpha * a));
     };
     float on = has ? 0.92f : 0.45f;
-    glyph(HOT_LYRICS, L"\xE8BD", g_fmtCtl, 0.45f); // lyrics (coming soon)
+    glyph(HOT_LYRICS, L"\xE8BD", g_fmtCtl, g_set.lyrics && g_lyView ? (lyrics ? 0.95f : 0.7f) : 0.45f); // lyrics: lit while they show
     // previous / next: two filled triangles; play: one; pause: two bars
     g_brush->SetColor(WithAlpha(g_fg, on * a));
     D2D1_POINT_2F pv = HotCenter(HOT_PREV), nx = HotCenter(HOT_NEXT), pl = HotCenter(HOT_PLAY);
@@ -3996,7 +4068,7 @@ static void ApplySettings(bool announce, bool quiet = false) {
         CreateSurface();
     }
     ArmMinuteTimer();
-    if (g_hwnd) { ArmWaterTimer(); ClipListen(); ArmCalRemTimer(); AskHotkey(); }
+    if (g_hwnd) { ArmWaterTimer(); ClipListen(); ArmCalRemTimer(); AskHotkey(); LyricsCheck(); }
     UpdateKeyboardHook();
     SetGlassColours(g_set.glass);
     if (g_set.glass != g_glassOn) SetGlass(g_set.glass);
@@ -4134,6 +4206,7 @@ static int GetStateFlags() {
 
 static void OnMediaChanged() {
     Media_Get(g_media);
+    LyricsCheck();
     // Window title = what's playing (handy for screen readers and for tests).
     wchar_t title[600] = L"Perch";
     if (g_media.hasSession) swprintf(title, 600, L"Perch - %ls - %ls", g_media.title, g_media.artist);
@@ -4323,6 +4396,7 @@ static void ClickHot(int hot) {
     case HOT_PLAY: HandleCommand(CMD_MEDIA_PLAYPAUSE); break;
     case HOT_NEXT: HandleCommand(CMD_MEDIA_NEXT); break;
     case HOT_VOLUME: ToggleOutputMute(); break;
+    case HOT_LYRICS: if (g_set.lyrics) g_lyView = !g_lyView; else OpenSettings(SEC_MUSIC); break; // off: where to turn them on
     case HOT_SHELF_CLEAR: ShelfClear(); break;
     case HOT_SHELF_TAB0: case HOT_SHELF_TAB0 + 1: g_shelfTab = hot - HOT_SHELF_TAB0; g_clipScroll = 0; break;
     case HOT_CLIP_CLEAR: ClipClear(); break;
@@ -4530,6 +4604,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == TIMER_ANIM) OnAnimTick();
         else if (wp == TIMER_CLOCK) { static int n = 0; if (g_glassOn && ++n % 2 == 0) GlassCapture(); if (!g_hidden) Render(); } // open: the clock, and Glass's copy every 2 s
         else if (wp == TIMER_TODO) { KillTimer(hwnd, TIMER_TODO); CheckTaskReminders(NowMinute()); if (!g_hidden) Render(); }
+        else if (wp == TIMER_LYRIC) { KillTimer(hwnd, TIMER_LYRIC); if (!g_hidden && g_t > 0) Render(); }
         else if (wp == TIMER_ASKCOPY) { KillTimer(hwnd, TIMER_ASKCOPY); g_askCopied = 0; if (!g_hidden) Render(); }
         else if (wp == TIMER_CLIP) { KillTimer(hwnd, TIMER_CLIP); g_clipCopied = -1; if (!g_hidden) Render(); }
         else if (wp == TIMER_CALREM) { KillTimer(hwnd, TIMER_CALREM); CheckCalReminders(NowMinute()); if (!g_hidden) Render(); }
@@ -4640,6 +4715,22 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_APP_CAL_DONE:
         OnCalDone((CalJob*)lp);
         return 0;
+    case WM_APP_LYRICS_DONE:
+        OnLyricsDone((LyricsJob*)lp);
+        return 0;
+    case WM_APP_LYRICS:
+        if (wp == 1) {
+            wchar_t a[256] = L"";
+            if (!GlobalGetAtomNameW((ATOM)lp, a, 256)) return 0;
+            std::wstring s = a;
+            size_t p1 = s.find(L'|'), p2 = s.find(L'|', p1 + 1);
+            if (p1 == std::wstring::npos || p2 == std::wstring::npos || !g_set.lyrics) return 0;
+            LyricsLookup(s.substr(0, p1), s.substr(p1 + 1, p2 - p1 - 1), _wtoi(s.c_str() + p2 + 1));
+            return 1;
+        }
+        if (wp == 2) return LyricsLineAt((int)lp);
+        if (wp == 3) { g_lyTestMs = (int)lp; if (!g_hidden) Render(); return 0; }
+        return g_lyStatus | ((LRESULT)g_lyLines.size() << 4);
     case WM_APP_ASK_DONE:
         OnAskDone((AskJob*)lp);
         return 0;

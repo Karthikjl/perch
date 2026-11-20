@@ -73,6 +73,13 @@ const wchar_t* kDefaultFile =
     L"From=08:00\r\n"
     L"Until=17:00\r\n"
     L"\r\n"
+    L"[Music]\r\n"
+    L"; Lyrics: 1 shows synced lyrics on the Music page, from LRCLIB (lrclib.net, a free lyrics database).\r\n"
+    L"; Turning it on sends each song's title, artist and length there to find its lyrics.\r\n"
+    L"Lyrics=0\r\n"
+    L"; Earlier: show each line early, in ms (0, 300, 600 or 1000), if lyrics seem to lag.\r\n"
+    L"Earlier=0\r\n"
+    L"\r\n"
     L"[Ask]\r\n"
     L"; Ask Perch sends your questions to Google's Gemini with your own key (Settings > Ask Perch > Paste key;\r\n"
     L"; the key is stored encrypted in ask.key, not here). Model: the Gemini model to use, as Google names it.\r\n"
@@ -301,6 +308,13 @@ std::wstring Settings_Load(const std::wstring& file, Settings& s) {
         else if (Settings_ParseHotkey(h, m, k)) s.askHotkey = Settings_HotkeyText(m, k);
         else if (problem.empty()) problem = L"Ask: Hotkey should be like Ctrl+Alt+P (with Ctrl, Alt or Win), or Off";
     }
+    ReadBool(file, L"Music", L"Lyrics", s.lyrics, problem);
+    {
+        int e = s.lyricsEarlier >= 1000 ? 3 : s.lyricsEarlier >= 600 ? 2 : s.lyricsEarlier >= 300 ? 1 : 0;
+        ReadChoice(file, L"Music", L"Earlier", {L"0", L"300", L"600", L"1000"}, e, problem);
+        static const int ms[] = {0, 300, 600, 1000};
+        s.lyricsEarlier = ms[e];
+    }
     ReadBool(file, L"Clipboard", L"History", s.clipHistory, problem);
     ReadInt(file, L"Clipboard", L"Max", 5, 50, s.clipMax, problem);
     ReadBool(file, L"Clipboard", L"Remember", s.clipRemember, problem);
@@ -386,6 +400,8 @@ void Settings_Save(const std::wstring& file, const Settings& s) {
     WritePrivateProfileStringW(L"Pomodoro", L"LongBreak", std::to_wstring(s.pomoLong).c_str(), f);
     WritePrivateProfileStringW(L"Ask", L"Model", s.askModel.c_str(), f);
     WritePrivateProfileStringW(L"Ask", L"Hotkey", s.askHotkey.c_str(), f);
+    WritePrivateProfileStringW(L"Music", L"Lyrics", s.lyrics ? L"1" : L"0", f);
+    WritePrivateProfileStringW(L"Music", L"Earlier", std::to_wstring(s.lyricsEarlier).c_str(), f);
     WritePrivateProfileStringW(L"Clipboard", L"History", s.clipHistory ? L"1" : L"0", f);
     WritePrivateProfileStringW(L"Clipboard", L"Max", std::to_wstring(s.clipMax).c_str(), f);
     WritePrivateProfileStringW(L"Clipboard", L"Remember", s.clipRemember ? L"1" : L"0", f);
