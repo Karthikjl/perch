@@ -23,7 +23,7 @@ $work = Join-Path $env:TEMP "perch-ask-test-$PID"
 New-Item -ItemType Directory -Force $work | Out-Null
 $ini = Join-Path $work 'settings.ini'
 $env:PERCH_DATA_DIR = $work
-$key = 'AIzaTestKey0123456789abcdefghijklmnopq'
+$key = 'TEST-not-a-real-key-0123456789abcdefghij' # made up; only a fake local server ever sees it
 
 # ---- a fake Gemini API on 127.0.0.1 ----
 $sync = [hashtable]::Synchronized(@{ Key = $key; Requests = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList)) })
@@ -110,7 +110,7 @@ try {
     $file = Join-Path $work 'ask.key'
     $raw = [IO.File]::ReadAllBytes($file)
     $plain = [Text.Encoding]::Unicode.GetString($raw) + [Text.Encoding]::ASCII.GetString($raw)
-    Assert (-not $plain.Contains('AIzaTest') -and -not ((Get-Content $ini -Raw) -match 'AIza')) '...encrypted in ask.key, and not in settings.ini'
+    Assert (-not $plain.Contains('TEST-not-a-real') -and -not ((Get-Content $ini -Raw) -match 'TEST-not-a-real')) '...encrypted in ask.key, and not in settings.ini'
     Assert (Wait-Until { (Ask 2) -eq 3 } 4000) "the models the key may use are listed (text models only: $(Ask 2))"
     Wait-Until { -not (Test-Flag Toast) } 7000 | Out-Null
 

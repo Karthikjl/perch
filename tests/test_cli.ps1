@@ -89,13 +89,13 @@ try {
 
     # ask: the key the app saved (encrypted for this Windows account) is read by perchctl too
     Add-Type 'using System; using System.Runtime.InteropServices; public static class CliAtom { [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern ushort GlobalAddAtom(string s); }' -ErrorAction SilentlyContinue
-    $atom = [CliAtom]::GlobalAddAtom('AIzaCliTestKey0123456789abcdefghijklmno')
+    $atom = [CliAtom]::GlobalAddAtom('TEST-cli-not-a-real-key-0123456789abcdef')
     [NotchTest]::SendMessage((Get-NotchWindow), [NotchTest]::WM_APP + 36, [IntPtr]4, [IntPtr][int]$atom) | Out-Null
     $env:PERCH_GEMINI_URL = "http://127.0.0.1:$port/v1beta"
     $r = Ctl ask What is the capital of France?
     Assert ($r.Code -eq 0 -and $r.Out -eq 'Paris is the capital of France.') "ask ($($r.Out))"
     $req = $sync.Bodies | Where-Object { $_ -like 'POST /v1beta/models/gemini-flash-latest:generateContent*' } | Select-Object -Last 1
-    Assert ($req -like '* | AIzaCliTestKey0123456789abcdefghijklmno | *What is the capital of France?*') "...with the key Perch saved, to the chosen model"
+    Assert ($req -like '* | TEST-cli-not-a-real-key-0123456789abcdef | *What is the capital of France?*') "...with the key Perch saved, to the chosen model"
     $before = (Todo).Tasks
     $r = Ctl ask Remind me to stretch at 3pm
     Assert ($r.Out -like 'Added task *: Stretch break (15:00)' -and (Todo).Tasks -eq $before + 1) "ask can add a real task, and Perch shows it ($($r.Out))"
