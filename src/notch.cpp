@@ -47,6 +47,7 @@
 #include "mascot.h"
 #include "ask.h"
 #include "lyrics.h"
+#include "update.h"
 
 #ifdef _MSC_VER
 #pragma comment(lib, "d2d1.lib")
@@ -137,6 +138,8 @@ enum {
     WM_APP_CAL_DONE = WM_APP + 30,      // calendar download finished: lp = CalJob*
     WM_APP_TRAY = WM_APP + 31,          // the tray icon was clicked
     WM_APP_STRAY = WM_APP + 32,
+    WM_APP_UPDATE_DONE = WM_APP + 39,   // an update check or download finished: lp = UpdateJob*
+    WM_APP_UPDATE = WM_APP + 40,        // tests: wp 0 = status; 1 = check now; 2 = install
     WM_APP_LYRICS_DONE = WM_APP + 37,   // a lyrics lookup finished: lp = LyricsJob*
     WM_APP_LYRICS = WM_APP + 38,        // tests: wp 0 = status | lines << 4; 1 = look up the song in global atom lp ("title|artist|seconds");
                                         //        2 = line index at lp ms (Earlier included); 3 = show the page as if the song were at lp ms (-1: real)
@@ -158,12 +161,13 @@ enum { TIMER_ANIM = 1, TIMER_CLOCK = 2, TIMER_FLASH = 3, TIMER_SETTINGS = 6, TIM
        TIMER_CALREM = 18,                        // calendar: the next event reminder
        TIMER_ASKCOPY = 19,                       // Ask: "Copied" goes
        TIMER_LYRIC = 20,                         // lyrics: the next line (only while the Music page shows)
-       TIMER_WAVE = 21 };                        // the sound bars' next frame (only while they show)                       // lyrics: the next line (only while the Music page shows)                     // Ask: "Copied" goes
+       TIMER_WAVE = 21,                          // the sound bars' next frame (only while they show)
+       TIMER_UPDATE = 22 };                      // updates: the next automatic check (a minute after start, then daily)                        // the sound bars' next frame (only while they show)                       // lyrics: the next line (only while the Music page shows)                     // Ask: "Copied" goes
 static const int kAskHotkeyId = 1;           // RegisterHotKey id for the Ask Perch shortcut                      // calendar: the next event reminder                        // clipboard: "Copied" goes                       // water: the next reminder (or midnight)                        // hover: open after the peek
 enum { CMD_QUIT = 100, CMD_AUTOSTART = 101,
        CMD_MEDIA_PLAYPAUSE = 104, CMD_MEDIA_NEXT = 105, CMD_MEDIA_PREV = 106, CMD_SHELF_CLEAR = 107,
        CMD_SETTINGS = 109, CMD_POMO_TOGGLE = 110, CMD_POMO_RESET = 111,
-       CMD_CAL_PASTE = 112, CMD_CAL_REFRESH = 113, CMD_CAL_REMOVE = 114, CMD_MINIMAL = 115, CMD_MASCOT = 116, CMD_ABOUT = 117, CMD_ASK = 118, CMD_ASK_KEY = 119,
+       CMD_CAL_PASTE = 112, CMD_CAL_REFRESH = 113, CMD_CAL_REMOVE = 114, CMD_MINIMAL = 115, CMD_MASCOT = 116, CMD_ABOUT = 117, CMD_ASK = 118, CMD_ASK_KEY = 119, CMD_UPDATE = 125,
        CMD_SIZE0 = 130, // + Notch size (Auto, 100%, 115%, 130%, 150%)
        CMD_TILE_OPEN = 120, CMD_TILE_SHOW = 121, CMD_TILE_REMOVE = 122 };
 enum StateFlags {
@@ -3601,6 +3605,100 @@ static void AskHotkey() { // follow the setting: (re)register the shortcut when 
 }
 static bool UiAskHotkeyOk() { return g_askHotkeyOk; }
 
+// ---- Updates from GitHub (update.cpp) ----
+// A minute after Perch starts, and then once a day while Check automatically is on (or when you press Check
+// now), a worker thread asks GitHub for the newest release. If it's newer, a pop-up says so once, and the menus
+// and Settings > About offer to install it. Installing downloads the release's Perch.exe next to this one,
+// checks it is a complete program, renames the running file to Perch.exe.old, puts the new one in its place
+// and starts it; the new copy waits for this one to quit and then deletes the .old file. If a step fails,
+// the old file is put back.
+enum UpdateStatus { UP_IDLE = 0, UP_CHECKING, UP_LATEST, UP_AVAILABLE, UP_DOWNLOADING, UP_FAILED, UP_OFFLINE };
+static int g_upStatus = UP_IDLE;
+static UpdateInfo g_upInfo;
+static std::wstring g_upAnnounced; // the version whose pop-up was shown
+struct UpdateJob { int kind; bool announce; UpdateInfo info; int status = 0; bool ok = false; std::wstring path; };
+static std::wstring ExePath() { wchar_t p[MAX_PATH * 2]; DWORD n = GetModuleFileNameW(nullptr, p, MAX_PATH * 2); return std::wstring(p, n); }
+static DWORD WINAPI UpdateThread(LPVOID p) {
+    UpdateJob* j = (UpdateJob*)p;
+    if (j->kind == 0) j->status = Update_Check(j->info);
+    else j->ok = Update_Download(j->info.url, j->path);
+    if (!PostMessageW(g_hwnd, WM_APP_UPDATE_DONE, 0, (LPARAM)j)) delete j;
+    return 0;
+}
+static void UpdateStart(UpdateJob* j) {
+    HANDLE t = CreateThread(nullptr, 64 * 1024, UpdateThread, j, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+    if (t) CloseHandle(t);
+    else delete j;
+}
+static void UpdateCheck(bool announce) {
+    if (g_upStatus == UP_CHECKING || g_upStatus == UP_DOWNLOADING) return;
+    g_upStatus = UP_CHECKING;
+    UpdateStart(new UpdateJob{0, announce});
+    SettingsUI_Refresh(g_set);
+}
+static void UpdateInstall() {
+    if (g_upStatus != UP_AVAILABLE || g_upInfo.url.empty()) return;
+    g_upStatus = UP_DOWNLOADING;
+    UpdateStart(new UpdateJob{1, false, g_upInfo, 0, false, ExePath() + L".new"});
+    SettingsUI_Refresh(g_set);
+}
+static bool UpdateSwap(const std::wstring& fresh) { // put the new file in place and start it
+    std::wstring cur = ExePath(), old = cur + L".old";
+    DeleteFileW(old.c_str());
+    if (!MoveFileExW(cur.c_str(), old.c_str(), MOVEFILE_REPLACE_EXISTING)) return false; // a running program can be renamed
+    if (!MoveFileExW(fresh.c_str(), cur.c_str(), MOVEFILE_REPLACE_EXISTING)) { MoveFileExW(old.c_str(), cur.c_str(), MOVEFILE_REPLACE_EXISTING); return false; }
+    std::wstring cmd = L"\"" + cur + L"\" --updated";
+    STARTUPINFOW si = {sizeof(si)};
+    PROCESS_INFORMATION pi = {};
+    if (!CreateProcessW(cur.c_str(), &cmd[0], nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
+        DeleteFileW(cur.c_str());
+        MoveFileExW(old.c_str(), cur.c_str(), MOVEFILE_REPLACE_EXISTING);
+        return false;
+    }
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return true;
+}
+static void OnUpdateDone(UpdateJob* j) {
+    if (j->kind == 0) {
+        if (j->status == 0) g_upStatus = UP_OFFLINE;
+        else if (j->status != 200) g_upStatus = UP_FAILED;
+        else if (Update_Newer(j->info.version, PERCH_VERSION) && !j->info.url.empty()) {
+            g_upStatus = UP_AVAILABLE;
+            g_upInfo = j->info;
+            if (j->announce && g_upAnnounced != g_upInfo.version) {
+                g_upAnnounced = g_upInfo.version;
+                wchar_t main[64];
+                swprintf(main, 64, L"Perch %ls is available", g_upInfo.version.c_str());
+                ShowToast(main, L"Right-click > Install update, or Settings > About", L"\xE896"); // Download
+            }
+        } else g_upStatus = UP_LATEST;
+    } else if (j->ok && UpdateSwap(j->path)) {
+        DestroyWindow(g_hwnd); // the new copy takes over
+        delete j;
+        return;
+    } else {
+        DeleteFileW(j->path.c_str());
+        g_upStatus = UP_FAILED;
+        ShowToast(L"Couldn't install the update", L"Perch is unchanged. Try again from Settings > About.", L"\xE7BA");
+    }
+    delete j;
+    SettingsUI_Refresh(g_set);
+}
+static void UiUpdateStatus(wchar_t* out, int n) {
+    switch (g_upStatus) {
+    case UP_CHECKING: wcsncpy(out, L"Checking GitHub\x2026", n); break;
+    case UP_LATEST: wcsncpy(out, L"Perch is up to date", n); break;
+    case UP_AVAILABLE: swprintf(out, n, L"Version %ls is available", g_upInfo.version.c_str()); break;
+    case UP_DOWNLOADING: wcsncpy(out, L"Downloading and installing\x2026", n); break;
+    case UP_FAILED: wcsncpy(out, L"Couldn't check or install. Try again", n); break;
+    case UP_OFFLINE: wcsncpy(out, L"Couldn't reach GitHub (offline?)", n); break;
+    default: swprintf(out, n, L"You have %ls", PERCH_VERSION);
+    }
+    out[n - 1] = 0;
+}
+static bool UiUpdateAvailable() { return g_upStatus == UP_AVAILABLE; }
+
 static void Render() {
     if (!g_rt && !CreateSurface()) return;
 
@@ -4164,7 +4262,8 @@ static void UiCalStatus(wchar_t* out, int n) { // the status under "Calendar lin
 static void OpenSettings(int section = -1) {
     SettingsUIHost host = {UiCommit, OpenSettingsFile, AutostartEnabled, SetAutostart,
                            CalPasteLink, []() { CalFetch(true); }, []() { CalSetLink(L""); }, UiCalStatus, UiWaterStatus,
-                           AskPasteKey, AskRemoveKey, UiAskStatus, UiAskModels, UiAskHotkeyOk};
+                           AskPasteKey, AskRemoveKey, UiAskStatus, UiAskModels, UiAskHotkeyOk,
+                           UiUpdateStatus, UiUpdateAvailable, []() { UpdateCheck(false); }, UpdateInstall};
     SettingsUI_Show(g_inst, g_set, host, section);
 }
 
@@ -4294,6 +4393,7 @@ static void ShowTrayMenu(POINT pt) {
     AppendMenuW(m, MF_STRING | (g_set.minimal ? MF_CHECKED : 0), CMD_MINIMAL, L"Minimal notch");
     AppendMenuW(m, MF_POPUP, (UINT_PTR)size, L"Notch size");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    if (g_upStatus == UP_AVAILABLE) AppendMenuW(m, MF_STRING, CMD_UPDATE, (L"Install update (" + g_upInfo.version + L")").c_str());
     AppendMenuW(m, MF_STRING, CMD_ABOUT, L"About Perch");
     AppendMenuW(m, MF_STRING, CMD_QUIT, L"Exit");
     SetForegroundWindow(g_hwnd);
@@ -4319,6 +4419,7 @@ static void HandleCommand(int cmd) {
     case CMD_MASCOT: { Settings s = g_set; s.mascot = !s.mascot; Settings_Save(SettingsFile(), s); ApplySettings(false, true); break; }
     case CMD_ABOUT: OpenSettings(SEC_ABOUT); break;
     case CMD_ASK: AskOpen(); break;
+    case CMD_UPDATE: UpdateInstall(); break;
     case CMD_ASK_KEY: AskPasteKey(); break;
     case CMD_CAL_REFRESH: CalFetch(true); break;
     case CMD_CAL_REMOVE: CalSetLink(L""); break;
@@ -4352,6 +4453,7 @@ static void ShowMenu(POINT screenPt) {
     AppendMenuW(m, MF_STRING | (AutostartEnabled() ? MF_CHECKED : 0), CMD_AUTOSTART, L"Start with Windows");
     AppendMenuW(m, MF_STRING | (g_shelf.empty() ? MF_GRAYED : 0), CMD_SHELF_CLEAR, L"Clear shelf");
     AppendMenuW(m, MF_STRING | (g_set.minimal ? MF_CHECKED : 0), CMD_MINIMAL, L"Minimal notch"); // a small tab while nothing plays
+    if (g_upStatus == UP_AVAILABLE) AppendMenuW(m, MF_STRING, CMD_UPDATE, (L"Install update (" + g_upInfo.version + L")").c_str());
     AppendMenuW(m, MF_STRING, CMD_ASK, (L"Ask Perch" + (g_askHotkeyOk && _wcsicmp(g_set.askHotkey.c_str(), L"Off") ? L"\t" + g_set.askHotkey : std::wstring())).c_str());
     AppendMenuW(m, MF_STRING, CMD_CAL_PASTE, g_set.calLink.empty() ? L"Paste calendar link" : L"Paste new calendar link");
     if (!g_set.calLink.empty()) {
@@ -4646,6 +4748,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == TIMER_ANIM) OnAnimTick();
         else if (wp == TIMER_CLOCK) { static int n = 0; if (g_glassOn && ++n % 2 == 0) GlassCapture(); if (!g_hidden) Render(); } // open: the clock, and Glass's copy every 2 s
         else if (wp == TIMER_TODO) { KillTimer(hwnd, TIMER_TODO); CheckTaskReminders(NowMinute()); if (!g_hidden) Render(); }
+        else if (wp == TIMER_UPDATE) { SetTimer(hwnd, TIMER_UPDATE, 24u * 3600 * 1000, nullptr); if (g_set.updAuto) UpdateCheck(true); }
         else if (wp == TIMER_WAVE) { if (!g_hidden) Render(); }
         else if (wp == TIMER_LYRIC) { KillTimer(hwnd, TIMER_LYRIC); if (!g_hidden && g_t > 0) Render(); }
         else if (wp == TIMER_ASKCOPY) { KillTimer(hwnd, TIMER_ASKCOPY); g_askCopied = 0; if (!g_hidden) Render(); }
@@ -4758,6 +4861,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_APP_CAL_DONE:
         OnCalDone((CalJob*)lp);
         return 0;
+    case WM_APP_UPDATE_DONE:
+        OnUpdateDone((UpdateJob*)lp);
+        return 0;
+    case WM_APP_UPDATE:
+        if (wp == 1) UpdateCheck(false);
+        if (wp == 2) UpdateInstall();
+        return g_upStatus;
     case WM_APP_LYRICS_DONE:
         OnLyricsDone((LyricsJob*)lp);
         return 0;
@@ -4906,7 +5016,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         LocalFree(argv);
     }
 
+    bool updated = wcsstr(GetCommandLineW(), L"--updated") != nullptr; // started by the updater
     HANDLE single = CreateMutexW(nullptr, TRUE, L"Local\\Perch.SingleInstance");
+    for (int i = 0; updated && GetLastError() == ERROR_ALREADY_EXISTS && i < 100; i++) { // the old copy is closing
+        CloseHandle(single);
+        Sleep(100);
+        single = CreateMutexW(nullptr, TRUE, L"Local\\Perch.SingleInstance");
+    }
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         HWND running = FindWindowW(L"PerchWindow", nullptr);
         if (running && !shelfArgs.empty()) {
@@ -4954,6 +5070,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     Render();
     ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
     Settings_Watch(DataDir(), g_hwnd, WM_APP_SETTINGS_CHANGED);
+    DeleteFileW((ExePath() + L".old").c_str()); // left by an update
+    DeleteFileW((ExePath() + L".new").c_str());
+    SetTimer(g_hwnd, TIMER_UPDATE, 60 * 1000, nullptr); // the first automatic check, a minute in
+    if (updated) ShowToast(L"Perch updated", L"Version " PERCH_VERSION, L"\xE895"); // Sync
     g_msgTaskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
     AddTrayIcon();
 

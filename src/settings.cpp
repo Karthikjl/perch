@@ -73,6 +73,11 @@ const wchar_t* kDefaultFile =
     L"From=08:00\r\n"
     L"Until=17:00\r\n"
     L"\r\n"
+    L"[Updates]\r\n"
+    L"; Check: 1 looks for a new version of Perch on GitHub a minute after it starts and then once a day.\r\n"
+    L"; Installing an update is always your choice (right-click > Install update, or Settings > About).\r\n"
+    L"Check=1\r\n"
+    L"\r\n"
     L"[Music]\r\n"
     L"; Lyrics: 1 shows synced lyrics on the Music page, from LRCLIB (lrclib.net, a free lyrics database).\r\n"
     L"; Turning it on sends each song's title, artist and length there to find its lyrics.\r\n"
@@ -308,6 +313,7 @@ std::wstring Settings_Load(const std::wstring& file, Settings& s) {
         else if (Settings_ParseHotkey(h, m, k)) s.askHotkey = Settings_HotkeyText(m, k);
         else if (problem.empty()) problem = L"Ask: Hotkey should be like Ctrl+Alt+P (with Ctrl, Alt or Win), or Off";
     }
+    ReadBool(file, L"Updates", L"Check", s.updAuto, problem);
     ReadBool(file, L"Music", L"Lyrics", s.lyrics, problem);
     {
         int e = s.lyricsEarlier >= 1000 ? 3 : s.lyricsEarlier >= 600 ? 2 : s.lyricsEarlier >= 300 ? 1 : 0;
@@ -400,6 +406,7 @@ void Settings_Save(const std::wstring& file, const Settings& s) {
     WritePrivateProfileStringW(L"Pomodoro", L"LongBreak", std::to_wstring(s.pomoLong).c_str(), f);
     WritePrivateProfileStringW(L"Ask", L"Model", s.askModel.c_str(), f);
     WritePrivateProfileStringW(L"Ask", L"Hotkey", s.askHotkey.c_str(), f);
+    WritePrivateProfileStringW(L"Updates", L"Check", s.updAuto ? L"1" : L"0", f);
     WritePrivateProfileStringW(L"Music", L"Lyrics", s.lyrics ? L"1" : L"0", f);
     WritePrivateProfileStringW(L"Music", L"Earlier", std::to_wstring(s.lyricsEarlier).c_str(), f);
     WritePrivateProfileStringW(L"Clipboard", L"History", s.clipHistory ? L"1" : L"0", f);

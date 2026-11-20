@@ -21,6 +21,10 @@ struct SettingsUIHost {
     void (*askStatus)(wchar_t* out, int n);     // "Not set", "Saved · 12 models"
     void (*askModels)(std::vector<std::wstring>& out); // the models the key may use (empty until Google answers)
     bool (*askHotkeyOk)();                      // false: the Ask shortcut is taken by another app
+    void (*updStatus)(wchar_t* out, int n);     // About > Updates: "Perch is up to date", "Version 0.2.0 is available"
+    bool (*updAvailable)();
+    void (*updCheck)();                         // Check now
+    void (*updInstall)();                       // Install update
 };
 
 // Sections, in sidebar order.

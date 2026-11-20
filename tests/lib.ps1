@@ -1,4 +1,4 @@
-﻿# Shared helpers for Notch tests. Dot-source this file: . "$PSScriptRoot\lib.ps1"
+# Shared helpers for Notch tests. Dot-source this file: . "$PSScriptRoot\lib.ps1"
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path $PSScriptRoot -Parent
 $Exe = Join-Path $Root 'build\Perch.exe'
@@ -270,6 +270,9 @@ function Test-Flag([string]$name) { ((Get-NotchState) -band $ST[$name]) -ne 0 }
 
 # The mascot replaces the clock pill after 15 s without real input; only test_mascot wants it.
 if (-not $script:KeepMascot) { $env:PERCH_MASCOT_OFF = '1' } else { Remove-Item Env:PERCH_MASCOT_OFF -ErrorAction SilentlyContinue }
+# Perch looks for updates on GitHub a minute after it starts; tests point it at a closed local port instead
+# (test_update sets its own fake GitHub).
+if (-not $env:PERCH_UPDATE_URL) { $env:PERCH_UPDATE_URL = 'http://127.0.0.1:9/releases/latest' }
 function Start-Notch {
     Get-Process Perch -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep -Milliseconds 300

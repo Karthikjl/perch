@@ -41,6 +41,7 @@ background polling: when the notch is closed, Perch is asleep until something ac
 | **Ask Perch** | Press **Ctrl + Alt + P** anywhere (or any shortcut you set in Settings), type a question, press Enter: the answer appears right in the notch (Esc closes, *Copy answer* copies it). Uses Google's Gemini with your own free key from aistudio.google.com, and the model you pick in Settings from the ones your key can use. The key is stored encrypted for your Windows account. |
 | **Pop-ups** | Volume, brightness, output device, battery (charging, low, full), Caps Lock, input language, Wi-Fi and Bluetooth headsets. Each can be turned off. |
 | **Mascot** | Leave the PC alone for 15 seconds and a little friend appears in the notch. It looks around, dozes off and wakes up when you're back. Seven styles: the Falcon, Ember, Mint leaf, Cyclops, Visor bot, Sunny and Moonlight. |
+| **Updates** | Perch checks GitHub for a new release a minute after it starts and once a day (switch off in Settings → About). When there is one, a pop-up says so; *Install update* (right-click menu, tray menu or Settings → About) downloads the new `Perch.exe`, swaps it in and restarts. Nothing is installed without you choosing it. |
 | **Settings** | A settings window (tray icon, right-click → *Settings…*, or the gear on the page bar). Everything is also in a commented `settings.ini` that applies the moment you save it. |
 
 ## Getting started
@@ -50,7 +51,7 @@ background polling: when the notch is closed, Perch is asleep until something ac
 3. Hover to open, scroll to change pages, right-click for the menu.
 4. Turn on *Start with Windows* from the tray icon or the right-click menu, if you like.
 
-Requires Windows 10 (2004 or later) or Windows 11, x64.
+Requires Windows 10 (2004 or later) or Windows 11, x64. Perch updates itself from then on (see Updates above).
 
 ### Tips
 
@@ -61,7 +62,7 @@ Requires Windows 10 (2004 or later) or Windows 11, x64.
 ## Privacy
 
 Perch doesn't send anything anywhere unless you ask it to. It downloads your calendar only if you add a
-calendar link, looks up song lyrics on LRCLIB only if you turn lyrics on, and sends your Ask Perch questions to Google only if you add your own Gemini key (to the
+calendar link, looks up song lyrics on LRCLIB only if you turn lyrics on, checks GitHub for new versions of Perch (switch off in Settings → About), and sends your Ask Perch questions to Google only if you add your own Gemini key (to the
 model you choose, using that key). Everything it keeps stays in `%APPDATA%\Perch`:
 
 | File | What's in it |

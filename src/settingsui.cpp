@@ -18,6 +18,7 @@
 #include <cmath>
 #include "settingsui.h"
 #include "mascot.h"
+#include "update.h"
 
 #ifdef _MSC_VER
 #pragma comment(lib, "dwmapi.lib")
@@ -31,7 +32,7 @@ const GUID kCLSID_WIC = {0xCACAF262, 0x9370, 0x4615, {0xA1, 0x3B, 0x9F, 0x55, 0x
 const GUID kIID_IWICImagingFactory = {0xEC5EC8A9, 0xC395, 0x4314, {0x9C, 0x77, 0x54, 0xD7, 0xA9, 0x35, 0xFF, 0x70}};
 const GUID kWICPixelFormat32bppPBGRA = {0x6FDDC324, 0x4E03, 0x4BFE, {0xB1, 0x85, 0x3D, 0x77, 0x76, 0x8D, 0xC9, 0x10}};
 const wchar_t* kClass = L"PerchSettings";
-const wchar_t* kVersion = L"0.1.0";
+const wchar_t* kVersion = PERCH_VERSION;
 
 // ---- layout (DIPs) ----
 const float kW = 654.4f, kH = 556, kSideW = 192;
@@ -72,6 +73,7 @@ enum Id {
     T_REMIND,
     K_PASTE, K_REMOVE, K_MODEL, K_HOTKEY, K_HOTKEY_OFF,
     M_LYRICS, M_EARLIER,
+    U_CHECK, U_INSTALL, U_AUTO,
     I_SOON, // a Coming soon control (never hit)
 };
 
@@ -162,6 +164,7 @@ bool GetBool(int id) {
     case W_REMIND: return g_s.waterRemind;
     case C_HISTORY: return g_s.clipHistory;
     case M_LYRICS: return g_s.lyrics;
+    case U_AUTO: return g_s.updAuto;
     case C_REMEMBER: return g_s.clipRemember;
     }
     return false;
@@ -189,6 +192,7 @@ void FlipBool(int id) {
     case W_REMIND: g_s.waterRemind = !g_s.waterRemind; break;
     case C_HISTORY: g_s.clipHistory = !g_s.clipHistory; break;
     case M_LYRICS: g_s.lyrics = !g_s.lyrics; break;
+    case U_AUTO: g_s.updAuto = !g_s.updAuto; break;
     case C_REMEMBER: g_s.clipRemember = !g_s.clipRemember; break;
     default: return;
     }
@@ -755,6 +759,16 @@ void BuildAbout() {
     Text(v, g_fCenter, D2D1::RectF(kCardL, 132, kCardR, 150), Hex(cSub));
     Text(L"A notch for Windows", g_fCenter, D2D1::RectF(kCardL, 148, kCardR, 166), Hex(cSub));
     g_y = 180;
+    Label(L"Updates");
+    {
+        static wchar_t st[96];
+        wcscpy(st, L"");
+        if (g_host.updStatus) g_host.updStatus(st, 96);
+        bool avail = g_host.updAvailable && g_host.updAvailable();
+        Card({{RK_BUTTONS, L"Version", st, U_CHECK, false, avail ? std::vector<std::wstring>{L"Install update", L"Check now"} : std::vector<std::wstring>{L"Check now"},
+               avail ? std::vector<int>{U_INSTALL, U_CHECK} : std::vector<int>{U_CHECK}},
+              {RK_TOGGLE, L"Check automatically", L"Once a day, from GitHub. Installing is always your choice", U_AUTO, false, {}, {}}});
+    }
     Label(L"Info");
     Card({{RK_TEXT, L"Calendar data", nullptr, I_NONE, false, {L"Only from your own calendar link"}, {}}});
     Label(L"Settings");
@@ -920,6 +934,8 @@ void Activate(const Hit& h) {
     case T_REMOVE: if (g_host.calRemove) g_host.calRemove(); break;
     case B_FILE: if (g_host.openFile) g_host.openFile(); break;
     case K_PASTE: if (g_host.askPaste) g_host.askPaste(); break;
+    case U_CHECK: if (g_host.updCheck) g_host.updCheck(); break;
+    case U_INSTALL: if (g_host.updInstall) g_host.updInstall(); break;
     case K_REMOVE: if (g_host.askRemove) g_host.askRemove(); break;
     case K_HOTKEY: g_recordKey = !g_recordKey; break; // the next keys pressed become the shortcut
     case K_HOTKEY_OFF: g_recordKey = false; g_s.askHotkey = L"Off"; g_host.commit(g_s); break;

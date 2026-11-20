@@ -43,6 +43,7 @@ struct Settings {
     int waterFrom = 8 * 60, waterUntil = 17 * 60; // From / Until, minutes since midnight
     bool shelfEmpty = false;
     // Clipboard history in the Shelf. [Clipboard]
+    bool updAuto = true;     // [Updates] Check: look for a new version on GitHub once a day
     bool lyrics = false;     // [Music] Lyrics: synced lyrics from LRCLIB (sends the song's title, artist and length)
     int lyricsEarlier = 0;   // [Music] Earlier: show each line this many ms early (0, 300, 600 or 1000)
     std::wstring askModel = L"gemini-flash-latest"; // [Ask] Model: the Gemini model questions go to (picked in Settings)
