@@ -54,6 +54,8 @@ $server.AddScript({
                        '{"name":"models/gemini-9.9-pro","supportedGenerationMethods":["generateContent"]},' +
                        '{"name":"models/text-embedding-004","supportedGenerationMethods":["embedContent"]},' +
                        '{"name":"models/gemini-9.9-flash","supportedGenerationMethods":["generateContent"]}]}'
+            } elseif ($path -like '/v1beta/models/*:generateContent' -and $body -like '*Remind me to call Mum at 18:00*' -and $body -notlike '*Added*') {
+                $out = '{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"add_task","args":{"title":"Call Mum","start":"18:00","end":"18:30"}}}]}}]}'
             } elseif ($path -like '/v1beta/models/gemini-flash-latest:generateContent' -or $path -like '/v1beta/models/gemini-9.9-pro:generateContent') {
                 $model = ($path -split '/')[3] -replace ':generateContent$', ''
                 $out = '{"candidates":[{"content":{"role":"model","parts":[{"text":"**Paris** is the capital of France.\n* It sits on the Seine\n* Model ' + $model + '"}]}}]}'
@@ -136,6 +138,14 @@ try {
     } else { Write-Host '  SKIP  Copy answer: the clipboard is busy, or the notch could not take the keyboard from this test' -ForegroundColor Yellow }
     Key 0x1B
 
+    # --- the one thing it can do: add a to-do task, for real ---
+    Ask 1 | Out-Null; Type-Text 'Remind me to call Mum at 18:00'; Key 0x0D
+    Assert (Wait-Until { -not (St).Busy -and (St).Len -gt 0 } 6000) 'asked to add a task'
+    Assert ((Last).Body -like '*"functionDeclarations"*"add_task"*' -and (Last).Body -like '*only action you can take*') 'the request offers one tool, add_task, and says it is the only action'
+    $tasks = Join-Path $work 'tasks.txt'
+    Assert ((Test-Path $tasks) -and ((Get-Content $tasks -Encoding UTF8) -match "`t1080`t1110`t0`tCall Mum$")) "the task is really added, 18:00-18:30 ($(if (Test-Path $tasks) { Get-Content $tasks -Encoding UTF8 }))"
+    Key 0x1B
+
     # --- the model is the user's choice ---
     Set-Content -LiteralPath $ini -Value '[Ask]', 'Model=gemini-9.9-pro' -Encoding ASCII
     Wait-Until { [int64][NotchTest]::SendMessage((Get-NotchWindow), [NotchTest]::WM_APP + 15, [IntPtr]6, [IntPtr]::Zero) -ge 2 } 3000 | Out-Null
@@ -163,7 +173,8 @@ try {
     $p = Get-Process Perch
     Start-Sleep -Seconds 1
     $c0 = $p.TotalProcessorTime.TotalMilliseconds; Start-Sleep -Seconds 4; $p.Refresh()
-    Assert (($p.TotalProcessorTime.TotalMilliseconds - $c0) -lt 30) "idle CPU ~0 ($([int]($p.TotalProcessorTime.TotalMilliseconds - $c0)) ms over 4 s)"
+    if (Test-Flag Playing) { Write-Host '  SKIP  idle CPU: media is playing (the sound bars move)' -ForegroundColor Yellow }
+    else { Assert (($p.TotalProcessorTime.TotalMilliseconds - $c0) -lt 30) "idle CPU ~0 ($([int]($p.TotalProcessorTime.TotalMilliseconds - $c0)) ms over 4 s)" }
     Assert ($p.WorkingSet64 / 1MB -lt 13) ("working set {0:N1} MB < 13 MB" -f ($p.WorkingSet64 / 1MB))
 } finally {
     Stop-Notch

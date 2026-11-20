@@ -1451,7 +1451,8 @@ static void DrawGlassBehind(ID2D1Geometry* shape) {
 }
 
 // ---- pages (open notch) ----
-static float OpenHeight() { return g_toast ? (g_act ? kActH : kToastH) : kExpH + kIconBarH * g_iconBar; }
+static bool g_ask; // (Ask Perch, below) its panel is taller
+static float OpenHeight() { return g_toast ? (g_act ? kActH : kToastH) : g_ask ? 236.0f : kExpH + kIconBarH * g_iconBar; }
 static float OpenWidth() { return g_toast && g_act ? kActW : kExpW; }
 
 static void FormatClock(INT64 t100ns, wchar_t* out, size_t n, bool minus) { // "03:07", "1:02:03"
@@ -3348,7 +3349,7 @@ static ID2D1PathGeometry* PillGeometry(float x, float w, float h, float r, float
 // worker thread (ask.cpp) and the answer shows under it, scrollable. Esc or switching away closes it.
 // The key is kept encrypted for this Windows account (DPAPI) in ask.key, never in settings.ini. The model
 // is the user's choice: Settings lists the models their key can use.
-static bool g_ask = false;                 // the Ask panel is showing
+                                           // g_ask (above): the Ask panel is showing
 static bool g_askBusy = false;             // a question is on its way
 static std::wstring g_askInput, g_askQuestion, g_askAnswer, g_askError;
 static std::vector<AskTurn> g_askTurns;    // the conversation so far (kept short)
@@ -3356,7 +3357,7 @@ static float g_askScroll = 0;              // DIPs scrolled into the answer
 static int g_askCopied = 0;                // "Copied" shows (until the timer)
 static std::vector<std::wstring> g_askModels; // what the key may use, from Google
 static bool g_askModelsBusy = false, g_askModelsTried = false; // asked Google once for this key
-struct AskJob { int kind; std::wstring key, model; std::vector<AskTurn> turns; int status = 0; std::wstring answer, error; std::vector<std::wstring> models; };
+struct AskJob { int kind; std::wstring key, model; std::vector<AskTurn> turns; int status = 0; std::wstring answer, error; std::vector<std::wstring> models; AskTask task; };
 static std::wstring AskKeyFile() { return DataDir() + L"\\ask.key"; }
 static std::wstring AskKey() {
     std::wstring key;
@@ -3386,7 +3387,7 @@ static bool AskSaveKey(const std::wstring& key) {
 static bool AskHasKey() { return GetFileAttributesW(AskKeyFile().c_str()) != INVALID_FILE_ATTRIBUTES; }
 static DWORD WINAPI AskThread(LPVOID p) {
     AskJob* j = (AskJob*)p;
-    if (j->kind == 0) j->status = Ask_Generate(j->key, j->model, j->turns, j->answer, j->error);
+    if (j->kind == 0) j->status = Ask_Generate(j->key, j->model, j->turns, j->answer, j->task, j->error);
     else j->status = Ask_ListModels(j->key, j->models, j->error);
     SecureZeroMemory(&j->key[0], j->key.size() * sizeof(wchar_t));
     if (!PostMessageW(g_hwnd, WM_APP_ASK_DONE, 0, (LPARAM)j)) delete j;
@@ -3426,7 +3427,22 @@ static void OnAskDone(AskJob* j) {
         SettingsUI_Refresh(g_set);
     } else {
         g_askBusy = false;
-        if (j->status == 200) { g_askAnswer = j->answer; g_askTurns.push_back({false, j->answer}); }
+        if (j->status == 200 && j->task.set) { // the model asked for a to-do task: add it for real, then say so
+            Task t;
+            t.title = j->task.title;
+            t.start = j->task.start;
+            t.end = j->task.end;
+            t.daily = j->task.daily;
+            g_tasks.push_back(t);
+            SaveTasks();
+            ArmTodoTimer();
+            wchar_t done[160];
+            if (t.start >= 0 && t.end >= 0) swprintf(done, 160, L"Added \x201C%ls\x201D to your To-do list, %02d:%02d\x2013%02d:%02d%ls.", t.title.c_str(), t.start / 60, t.start % 60, t.end / 60, t.end % 60, t.daily ? L", every day" : L"");
+            else if (t.start >= 0) swprintf(done, 160, L"Added \x201C%ls\x201D to your To-do list at %02d:%02d%ls. You'll get a reminder then.", t.title.c_str(), t.start / 60, t.start % 60, t.daily ? L", every day" : L"");
+            else swprintf(done, 160, L"Added \x201C%ls\x201D to your To-do list%ls.", t.title.c_str(), t.daily ? L", every day" : L"");
+            g_askAnswer = j->answer.empty() ? std::wstring(done) : j->answer + L"\n\n" + done;
+            g_askTurns.push_back({false, g_askAnswer});
+        } else if (j->status == 200) { g_askAnswer = j->answer; g_askTurns.push_back({false, j->answer}); }
         else { g_askError = j->error; if (!g_askTurns.empty() && g_askTurns.back().user) g_askTurns.pop_back(); }
         UpdateTarget();
         if (!g_hidden) Render();
@@ -3486,25 +3502,76 @@ static bool AskKeyDown(WPARAM vk) {
     Render();
     return true;
 }
-static D2D1_RECT_F AskFieldRect() { float px = PX(); return D2D1::RectF(px + 30, 48, px + kExpW - 30, 74); }
-static D2D1_RECT_F AskAnswerRect() { float px = PX(); return D2D1::RectF(px + 34, 82, px + kExpW - 34, 146); }
-static D2D1_RECT_F AskCopyRect() { float px = PX(); return D2D1::RectF(px + kExpW - 92, 148, px + kExpW - 34, 164); }
+// The Ask panel is taller than the pages: the title with the model (and Copy) on top, the conversation in the
+// middle, the question field at the bottom, like a chat.
+static const float kAskH = 236;
+static D2D1_RECT_F AskFieldRect() { float px = PX(); return D2D1::RectF(px + 30, kAskH - 46, px + kExpW - 30, kAskH - 18); }
+static D2D1_RECT_F AskAnswerRect() { float px = PX(); return D2D1::RectF(px + 34, 52, px + kExpW - 40, kAskH - 56); }
+static D2D1_RECT_F AskCopyRect() { // left of the model's name in the title row
+    float right = PX() + kExpW - 34 - TextWidth(g_set.askModel.c_str(), g_fmtMeta) - 12;
+    return D2D1::RectF(right - (AskHasKey() ? 44 : 64), 23, right, 39);
+}
 static void DrawAsk(float a) {
     float px = PX();
     D2D1_COLOR_F fg = WithAlpha(g_fg, a), grey = WithAlpha(g_grey, a);
     Text(L"Ask Perch", g_fmtHdr, D2D1::RectF(px + 32, 21.6f, px + 200, 41.6f), fg);
     g_fmtMeta->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
-    Text(g_set.askModel.c_str(), g_fmtMeta, D2D1::RectF(px + 200, 23, px + kExpW - 34, 39), grey);
+    Text(g_set.askModel.c_str(), g_fmtMeta, D2D1::RectF(px + 120, 23, px + kExpW - 34, 39), grey);
+    D2D1_RECT_F cr = AskCopyRect();
+    if (!AskHasKey()) Text(L"Add a key", g_fmtMeta, cr, WithAlpha(g_hot == HOT_ASK_SETTINGS ? g_fg : kWaterBlue, a));
+    else if (!g_askAnswer.empty() && !g_askBusy) {
+        if (g_hot == HOT_ASK_COPY) { g_brush->SetColor(WithAlpha(g_fg, 0.1f * a)); g_rt->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cr.left - 4, cr.top - 2, cr.right + 6, cr.bottom + 2), 8, 8), g_brush); }
+        Text(g_askCopied ? L"Copied" : L"Copy", g_fmtMeta, cr, WithAlpha(g_hot == HOT_ASK_COPY ? g_fg : g_grey, a));
+    }
     g_fmtMeta->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
 
+    // the conversation: the question in bold, the answer under it
+    D2D1_RECT_F ar = AskAnswerRect();
+    std::wstring body;
+    D2D1_COLOR_F col = fg;
+    bool asked = !g_askQuestion.empty() && (g_askBusy || !g_askAnswer.empty() || !g_askError.empty());
+    if (g_askBusy) { body = L"Thinking\x2026"; col = grey; }
+    else if (!g_askError.empty()) { body = g_askError; col = WithAlpha(kRed, a); }
+    else if (!g_askAnswer.empty()) body = g_askAnswer;
+    else if (!AskHasKey()) { body = L"Ask Perch uses Google's Gemini with your own free key from aistudio.google.com. Add it in Settings > Ask Perch."; col = grey; }
+    else { body = L"Ask anything, or have Perch add a task:\n\x201C" L"Add call Mum at 18:00 to my to-do list\x201D"; col = grey; }
+    if (asked) body = g_askQuestion + L"\n\n" + body;
+    IDWriteTextLayout* l = nullptr;
+    if (SUCCEEDED(g_dw->CreateTextLayout(body.c_str(), (UINT32)body.size(), g_fmtAsk, ar.right - ar.left, 10000, &l))) {
+        if (!asked && !g_askBusy) l->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        DWRITE_TEXT_METRICS m;
+        l->GetMetrics(&m);
+        float boxH = ar.bottom - ar.top, maxScroll = std::max(0.0f, m.height - boxH);
+        g_askScroll = std::min(g_askScroll, maxScroll);
+        ID2D1SolidColorBrush* qb = nullptr; // the question stays white even when the answer is grey or red
+        if (asked) {
+            DWRITE_TEXT_RANGE q = {0, (UINT32)g_askQuestion.size()};
+            l->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD, q);
+            if (SUCCEEDED(g_rt->CreateSolidColorBrush(fg, &qb))) l->SetDrawingEffect(qb, q);
+        }
+        float y = asked || g_askBusy ? ar.top - g_askScroll : ar.top + std::max(0.0f, (boxH - m.height) / 2); // an empty panel's hint sits in the middle
+        g_rt->PushAxisAlignedClip(ar, D2D1_ANTIALIAS_MODE_ALIASED);
+        g_brush->SetColor(col);
+        g_rt->DrawTextLayout(D2D1::Point2F(ar.left, y), l, g_brush);
+        g_rt->PopAxisAlignedClip();
+        if (maxScroll > 0) { // where you are in it
+            float th = std::max(14.0f, boxH * boxH / m.height), ty = ar.top + (boxH - th) * g_askScroll / maxScroll;
+            g_brush->SetColor(WithAlpha(g_fg, 0.25f * a));
+            g_rt->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(ar.right + 8, ty, ar.right + 11, ty + th), 1.5f, 1.5f), g_brush);
+        }
+        SafeRelease(qb);
+        l->Release();
+    }
+
+    // the question field
     D2D1_RECT_F f = AskFieldRect();
-    g_brush->SetColor(WithAlpha(g_fg, 0.08f * a));
-    g_rt->FillRoundedRectangle(D2D1::RoundedRect(f, 13, 13), g_brush);
-    D2D1_RECT_F tr = D2D1::RectF(f.left + 12, f.top + 5, f.right - 12, f.bottom - 5);
     bool typing = GetForegroundWindow() == g_hwnd;
+    g_brush->SetColor(WithAlpha(g_fg, (typing ? 0.11f : 0.08f) * a));
+    g_rt->FillRoundedRectangle(D2D1::RoundedRect(f, 14, 14), g_brush);
+    if (typing) { g_brush->SetColor(WithAlpha(kWaterBlue, 0.55f * a)); g_rt->DrawRoundedRectangle(D2D1::RoundedRect(f, 14, 14), g_brush, 1); }
+    D2D1_RECT_F tr = D2D1::RectF(f.left + 14, f.top + 6, f.right - 64, f.bottom - 6);
     std::wstring shown = g_askInput;
-    // keep the end of a long question in view
-    while (shown.size() > 1 && TextWidth(shown.c_str(), g_fmtMeta) > tr.right - tr.left - 8) shown.erase(0, 1);
+    while (shown.size() > 1 && TextWidth(shown.c_str(), g_fmtMeta) > tr.right - tr.left - 6) shown.erase(0, 1); // keep the end in view
     if (shown.empty()) Text(g_askBusy ? L"" : L"Ask anything\x2026", g_fmtMeta, tr, grey);
     else Text(shown.c_str(), g_fmtMeta, tr, fg);
     if (typing && !g_askBusy) { // the caret
@@ -3512,47 +3579,9 @@ static void DrawAsk(float a) {
         g_brush->SetColor(WithAlpha(kWaterBlue, a));
         g_rt->FillRectangle(D2D1::RectF(cx, tr.top + 1, cx + 1.2f, tr.bottom - 1), g_brush);
     }
-
-    D2D1_RECT_F ar = AskAnswerRect();
-    std::wstring body;
-    D2D1_COLOR_F col = fg;
-    if (g_askBusy) { body = L"Thinking\x2026"; col = grey; }
-    else if (!g_askError.empty()) { body = g_askError; col = WithAlpha(kRed, a); }
-    else if (!g_askAnswer.empty()) body = g_askAnswer;
-    else if (!AskHasKey()) { body = L"Ask Perch uses Google's Gemini with your own free key. Add it in Settings > Ask Perch."; col = grey; }
-    else { body = L"Type a question and press Enter. Esc closes."; col = grey; }
-    if (!g_askQuestion.empty() && (g_askBusy || !g_askAnswer.empty() || !g_askError.empty())) body = g_askQuestion + L"\n\n" + body;
-    IDWriteTextLayout* l = nullptr;
-    if (SUCCEEDED(g_dw->CreateTextLayout(body.c_str(), (UINT32)body.size(), g_fmtAsk, ar.right - ar.left, 10000, &l))) {
-        DWRITE_TEXT_METRICS m;
-        l->GetMetrics(&m);
-        float maxScroll = std::max(0.0f, m.height - (ar.bottom - ar.top));
-        g_askScroll = std::min(g_askScroll, maxScroll);
-        if (!g_askQuestion.empty() && (g_askBusy || !g_askAnswer.empty() || !g_askError.empty())) {
-            DWRITE_TEXT_RANGE q = {0, (UINT32)g_askQuestion.size()};
-            l->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD, q);
-        }
-        g_rt->PushAxisAlignedClip(ar, D2D1_ANTIALIAS_MODE_ALIASED);
-        g_brush->SetColor(col);
-        g_rt->DrawTextLayout(D2D1::Point2F(ar.left, ar.top - g_askScroll), l, g_brush);
-        g_rt->PopAxisAlignedClip();
-        if (maxScroll > 0) { // where you are in it
-            float th = (ar.bottom - ar.top) * (ar.bottom - ar.top) / m.height, ty = ar.top + (ar.bottom - ar.top - th) * g_askScroll / maxScroll;
-            g_brush->SetColor(WithAlpha(g_fg, 0.25f * a));
-            g_rt->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(ar.right + 6, ty, ar.right + 9, ty + th), 1.5f, 1.5f), g_brush);
-        }
-        l->Release();
-    }
-    if (!g_askAnswer.empty() && !g_askBusy) {
-        g_fmtMeta->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
-        Text(g_askCopied ? L"Copied" : L"Copy answer", g_fmtMeta, AskCopyRect(), WithAlpha(g_hot == HOT_ASK_COPY ? g_fg : g_grey, a));
-        g_fmtMeta->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-    }
-    if (!AskHasKey()) {
-        g_fmtMeta->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
-        Text(L"Open Settings", g_fmtMeta, AskCopyRect(), WithAlpha(g_hot == HOT_ASK_SETTINGS ? g_fg : kWaterBlue, a));
-        g_fmtMeta->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-    }
+    g_fmtMeta->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+    Text(g_askInput.empty() ? L"Esc closes" : L"Enter \x21B5", g_fmtMeta, D2D1::RectF(f.right - 90, f.top + 6, f.right - 12, f.bottom - 6), WithAlpha(g_grey, 0.8f * a));
+    g_fmtMeta->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
 }
 static void UiAskStatus(wchar_t* out, int n) {
     if (!AskHasKey()) wcsncpy(out, L"Not set", n);

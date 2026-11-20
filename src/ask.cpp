@@ -52,12 +52,35 @@ std::wstring Ask_BaseUrl() {
     return L"https://generativelanguage.googleapis.com/v1beta";
 }
 
+// "HH:MM" -> minutes since midnight, or -1.
+static int Minutes(const std::wstring& t) {
+    int h = -1, m = -1;
+    return swscanf(t.c_str(), L"%d:%d", &h, &m) == 2 && h >= 0 && h < 24 && m >= 0 && m < 60 ? h * 60 + m : -1;
+}
+
 int Ask_Generate(const std::wstring& key, const std::wstring& model, const std::vector<AskTurn>& turns,
-                 std::wstring& answer, std::wstring& error) {
+                 std::wstring& answer, AskTask& task, std::wstring& error) {
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    wchar_t now[64];
+    swprintf(now, 64, L"It is %02d:%02d now. ", st.wHour, st.wMinute);
+    // One tool: add a task to Perch's to-do list. Nothing else can be done from here, and the model is told so,
+    // so it never claims to have set a reminder, sent a message or opened something.
     std::string body = "{\"systemInstruction\":{\"parts\":[{\"text\":" +
-                       Net_JsonString(L"You are Perch, a helpful assistant in a small panel at the top of a Windows screen. "
-                                  L"Answer briefly and plainly in a few short paragraphs or a short list. No tables.") +
-                       "}]},\"contents\":[";
+                       Net_JsonString(std::wstring(L"You are Perch, a helpful assistant in a small panel at the top of a Windows screen. ") + now +
+                                      L"Answer briefly and plainly in a few short paragraphs or a short list. No tables. "
+                                      L"You can add a task to the user's Perch to-do list for today with the add_task tool (with an optional "
+                                      L"start and end time, and daily if it should repeat every day); a task with a start time gets a reminder then. "
+                                      L"That is the only action you can take. You cannot set alarms, calendar events or other reminders, "
+                                      L"send messages, open apps or change anything else, so never say you did; say what the user can do instead.") +
+                       "}]},\"tools\":[{\"functionDeclarations\":[{\"name\":\"add_task\","
+                       "\"description\":\"Adds a task to the user's Perch to-do list for today.\","
+                       "\"parameters\":{\"type\":\"OBJECT\",\"properties\":{"
+                       "\"title\":{\"type\":\"STRING\",\"description\":\"Short task title, at most 60 characters\"},"
+                       "\"start\":{\"type\":\"STRING\",\"description\":\"Start time today, HH:MM in 24 hours (optional)\"},"
+                       "\"end\":{\"type\":\"STRING\",\"description\":\"End time today, HH:MM in 24 hours (optional)\"},"
+                       "\"daily\":{\"type\":\"BOOLEAN\",\"description\":\"Repeat every day (optional)\"}},"
+                       "\"required\":[\"title\"]}}]}],\"contents\":[";
     for (size_t i = 0; i < turns.size(); i++) {
         if (i) body += ",";
         body += std::string("{\"role\":\"") + (turns[i].user ? "user" : "model") + "\",\"parts\":[{\"text\":" + Net_JsonString(turns[i].text) + "}]}";
@@ -69,7 +92,21 @@ int Ask_Generate(const std::wstring& key, const std::wstring& model, const std::
     std::wstring all;
     for (const std::wstring& t : Net_JsonValues(reply, "text")) all += t;
     answer = Plain(all);
-    if (answer.empty()) { error = L"Google sent an empty answer. Try asking another way."; return 204; }
+    size_t call = reply.find("\"functionCall\"");
+    if (call != std::string::npos) { // the model wants a task added
+        std::string c = reply.substr(call);
+        std::vector<std::wstring> name = Net_JsonValues(c, "name"), title = Net_JsonValues(c, "title"), start = Net_JsonValues(c, "start"), end = Net_JsonValues(c, "end");
+        if (!name.empty() && name[0] == L"add_task" && !title.empty() && !title[0].empty()) {
+            task.set = true;
+            task.title = title[0].substr(0, 60);
+            task.start = start.empty() ? -1 : Minutes(start[0]);
+            task.end = end.empty() || task.start < 0 ? -1 : Minutes(end[0]);
+            if (task.end >= 0 && task.end <= task.start) task.end = -1;
+            size_t d = c.find("\"daily\"");
+            task.daily = d != std::string::npos && c.find("true", d) != std::string::npos && c.find("true", d) < c.find_first_of(",}", d + 7);
+        }
+    }
+    if (answer.empty() && !task.set) { error = L"Google sent an empty answer. Try asking another way."; return 204; }
     return 200;
 }
 
