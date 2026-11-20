@@ -1,4 +1,5 @@
-# Notch style (Classic joined to the top edge / Floating just below it) and Glass.
+# Notch style (Classic joined to the top edge / Floating just below it) and Glass (a blurred copy of what's
+# behind, drawn inside the notch's outline).
 # Uses its own temporary data folder (PERCH_DATA_DIR). Doesn't move the mouse.
 . "$PSScriptRoot\lib.ps1"
 Write-Host '== Notch style and Glass =='
@@ -15,6 +16,8 @@ public static class LookProbe {
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] static extern bool GetWindowDisplayAffinity(IntPtr h, out uint a);
+    public static uint GetWindowDisplayAffinity(IntPtr h) { uint a; GetWindowDisplayAffinity(h, out a); return a; }
     public static RECT[] BlurStrips() { // the visible Glass blur windows
         var list = new System.Collections.Generic.List<RECT>();
         EnumWindows((h, l) => { var sb = new System.Text.StringBuilder(64); GetClassName(h, sb, 64);
@@ -62,7 +65,7 @@ try {
     Assert ((Get-Setting $SQ.Style) -eq 0 -and (Get-Setting $SQ.Glass) -eq 0) 'defaults: Classic, no Glass'
     $p = Get-Pill
     Assert ($p.Top -eq $scr.Top -and [math]::Abs(($p.Left + $p.Right) / 2 - $scr.Width / 2) -le 2) "Classic: joined to the top edge, centred ($($p.Left),$($p.Top))"
-    Assert ([LookProbe]::FindWindow('PerchBlur', $null) -eq [IntPtr]::Zero) 'no blur window without Glass'
+    Assert ([LookProbe]::BlurStrips().Count -eq 0) 'no blur window without Glass'
 
     # --- Floating ---
     Set-Look '[Notch]', 'Style=Floating'
@@ -77,16 +80,13 @@ try {
     Set-Look '[Notch]', 'Glass=1'
     Assert ((Get-Setting $SQ.Glass) -eq 1) 'Glass read from the file'
     Assert ((Get-Setting $SQ.Style) -eq 0) 'back to Classic when Style is left out'
-    Assert ([LookProbe]::FindWindow('PerchBlur', $null) -ne [IntPtr]::Zero) 'Glass adds the blur window behind the pill'
-    # Windows blurs whole rectangles (it ignores window shapes), and blocks side by side show seams or smear,
-    # so the frost is one block exactly over the notch's body.
-    $p = Get-Pill
-    $blocks = [LookProbe]::BlurStrips()
-    $b = $blocks | Select-Object -First 1
-    Assert ($blocks.Count -eq 1 -and [math]::Abs($b.Left - $p.Left) -le 1 -and [math]::Abs($b.Right - $p.Right) -le 1 -and $b.Top -eq $p.Top -and [math]::Abs($b.Bottom - $p.Bottom) -le 1) "one blur block over the notch's body ($($blocks.Count) block(s): $($b.Left)-$($b.Right) x $($b.Top)-$($b.Bottom), pill $($p.Left)-$($p.Right) x $($p.Top)-$($p.Bottom))"
+    # The frost is Perch's own: a blurred copy of what's behind, drawn inside the notch's outline, so no
+    # rectangle of Windows blur pokes out past the rounded corners, and no extra window is needed.
+    Assert ([LookProbe]::BlurStrips().Count -eq 0) 'Glass needs no blur window (the blur is drawn inside the notch)'
+    Assert ([LookProbe]::GetWindowDisplayAffinity((Get-NotchWindow)) -eq 0) "Perch still shows in screenshots after taking its copy (affinity $([LookProbe]::GetWindowDisplayAffinity((Get-NotchWindow))))"
     Write-Host "  screenshot: $(Save-TopShot 'look-glass')"
     Set-Look '[Notch]', 'Glass=0'
-    Assert ([LookProbe]::FindWindow('PerchBlur', $null) -eq [IntPtr]::Zero) '...and removes it again'
+    Assert ([LookProbe]::BlurStrips().Count -eq 0) '...and none after turning it off'
 
     # --- bad values ---
     Write-Ini '[Notch]', 'Style=Round'

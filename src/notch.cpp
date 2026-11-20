@@ -27,6 +27,7 @@
 #include <audiopolicy.h>
 #include <shlobj.h>
 #include <wincrypt.h>
+#include <dwmapi.h>
 #include <shobjidl.h>
 #include <wincodec.h>
 #include <wlanapi.h>
@@ -221,6 +222,9 @@ static float g_pageT = 1;                   // 0..1 slide from g_pagePrev to g_p
 static int g_pageDir = 1;                   // +1 slides left (next), -1 slides right (previous)
 static float g_iconBar = 0, g_iconBarTarget = 0; // 0..1, page icons in place of the dots
 static int g_hot = -1;                      // hot spot under the pointer (HOT_*), for hover highlights
+static bool g_glassOn = false;            // Glass: a blurred copy of what's behind sits under the tint
+static ID2D1Bitmap* g_glassBmp = nullptr; // the blurred copy, a quarter of the window's size
+static RECT g_glassAt = {};               // screen rectangle it was taken from
 static bool g_dragOver = false;             // files are being dragged over the notch
 static bool g_draggingOut = false;          // we're dragging shelf items out
 static int g_pressTile = -1;                // item under a left-button press
@@ -240,10 +244,6 @@ static int g_setLoads;                // how many times settings were loaded (te
 static float g_offY = 0;             // Floating: gap above the pill, DIPs (snapped to whole pixels)
 static D2D1_RECT_F g_pill;           // pill as last drawn, DIPs (before g_offY)
 static bool g_hidden = false;        // window hidden (full screen app in front)
-static std::vector<HWND> g_blurWnds;   // Glass: thin blur windows stacked under the notch
-static std::vector<RECT> g_blurRects;  // where they are now (screen px)
-static bool g_glassOn = false;
-static void HideBlur();
 
 static float PillX(float w) { return (kWinW - w) / 2; } // the notch is always centred
 static bool MinimalTab(); // Minimal notch and nothing playing: the small tab
@@ -671,7 +671,6 @@ static void UpdateVisibility() {
     g_hidden = hide;
     if (hide) {
         ShowWindow(g_hwnd, SW_HIDE);
-        HideBlur();
     } else {
         Render();
         PetRecheck();
@@ -799,6 +798,7 @@ static void ReleaseSurface() {
     for (ShelfItem& it : g_shelf) { SafeRelease(it.icon); it.iconTried = false; }
     SafeRelease(g_art);
     SafeRelease(g_petGlow);
+    SafeRelease(g_glassBmp); // belongs to the old surface; the next copy is made on the new one
     g_artLoaded = ~0u; // recreate artwork on the new surface
     SafeRelease(g_brush);
     SafeRelease(g_rt);
@@ -853,7 +853,7 @@ static void PlaceWindow() {
     g_offY = g_set.style == STYLE_ISLAND ? std::round(8 * g_scale) / g_scale : 0;
     int left = (mi.rcMonitor.left + mi.rcMonitor.right) / 2 - g_pxW / 2;
     SetWindowPos(g_hwnd, HWND_TOPMOST, left, mi.rcMonitor.top, g_pxW, g_pxH, SWP_NOACTIVATE);
-    g_blurRects.clear(); // the blur follows on the next draw
+    SafeRelease(g_glassBmp); // a copy taken at the old place doesn't fit the new one
 }
 
 // ---- open notch layout (DIPs; x measured from the open pill's left edge, px) ----
@@ -1356,83 +1356,76 @@ static void DrawClipList(float a) {
 }
 
 
-// ---- 1.7 Glass: Windows blurs what's behind a window, but a per-pixel-alpha window can't shape
-// that blur. So a plain helper window, cut to the pill's shape, sits just under the notch and
-// carries the blur. It only moves when the pill changes size; Windows does the blurring.
-static HWND MakeBlurWindow() {
-    static bool registered = false;
-    if (!registered) {
-        WNDCLASSW wc = {};
-        wc.lpfnWndProc = DefWindowProcW;
-        wc.hInstance = GetModuleHandleW(nullptr);
-        wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH); // black = see-through under the blur
-        wc.lpszClassName = L"PerchBlur";
-        RegisterClassW(&wc);
-        registered = true;
-    }
-    HWND w = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST | WS_EX_TRANSPARENT, L"PerchBlur", L"", WS_POPUP,
-                             0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr); // not owned: owned windows stay above their owner
-    struct AccentPolicy { int state, flags, color, anim; };
-    struct CompositionData { int attribute; void* data; SIZE_T size; };
-    typedef BOOL(WINAPI * SetWcaFn)(HWND, CompositionData*);
-    static SetWcaFn setWca = (SetWcaFn)(void*)GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetWindowCompositionAttribute");
-    AccentPolicy accent = {3, 0, 0, 0};                  // ACCENT_ENABLE_BLURBEHIND
-    CompositionData data = {19, &accent, sizeof accent}; // WCA_ACCENT_POLICY
-    if (w && setWca) setWca(w, &data);
-    return w;
-}
-static void HideBlur() {
-    for (HWND w : g_blurWnds) ShowWindow(w, SW_HIDE);
-    g_blurRects.clear();
-}
-
-// Glass (frosted glass behind the open notch). Windows blurs whole rectangles and ignores window
-// shapes, so the frosting is a stack of thin rectangles, each just inside the notch's outline (its curved
-// shoulders and corners), and nothing is blurred outside it.
-static void SetBlur(bool on) {
-    g_glassOn = on;
-    g_blurRects.clear(); // settings may have changed the shape: rebuild on the next draw
-    if (!on) {
-        for (HWND w : g_blurWnds) DestroyWindow(w);
-        g_blurWnds.clear();
-        g_blurRects.clear();
+// ---- 1.7 Glass: what's behind the notch, blurred, drawn inside its outline ----
+// Windows' own blur only comes in rectangles, so its corners poked out past the notch's rounded ones.
+// Instead Perch takes a small copy of the screen under its window (leaving itself out of the copy),
+// blurs it, and draws it clipped to the notch's exact shape under the tint. A fresh copy is taken when
+// the notch starts to open, every couple of seconds while it's open, and once when it has closed;
+// nothing runs while it sits closed.
+static void BoxBlur(DWORD* p, int w, int h, int r) { // one horizontal and one vertical pass
+    std::vector<DWORD> tmp((size_t)w * h);
+    for (int pass = 0; pass < 2; pass++) {
+        const DWORD* src = pass ? tmp.data() : p;
+        DWORD* dst = pass ? p : tmp.data();
+        int n = pass ? h : w, lines = pass ? w : h;
+        for (int l = 0; l < lines; l++)
+            for (int i = 0; i < n; i++) {
+                unsigned sr = 0, sg = 0, sb = 0, cnt = 0;
+                for (int k = std::max(0, i - r); k <= std::min(n - 1, i + r); k++) {
+                    DWORD c = pass ? src[(size_t)k * w + l] : src[(size_t)l * w + k];
+                    sr += (c >> 16) & 255; sg += (c >> 8) & 255; sb += c & 255; cnt++;
+                }
+                dst[pass ? (size_t)i * w + l : (size_t)l * w + i] = 0xFF000000u | ((sr / cnt) << 16) | ((sg / cnt) << 8) | (sb / cnt);
+            }
     }
 }
-
-// The blurred part of Glass, in DIPs (window coordinates, before the Floating offset).
-static std::vector<D2D1_RECT_F> GlassBlocks(float x, float w, float h, float r, bool island) {
-    (void)r; (void)island;
-    // One block over the whole body: Windows blurs every block on its own (whatever the window's shape),
-    // so blocks side by side show a hard edge where they meet, and thin ones smear. The small curved
-    // shoulders keep the tint without blur; the price is a faint frost just outside the bottom corners.
-    std::vector<D2D1_RECT_F> out;
-    if (w > 0.5f && h > 0.5f) out.push_back(D2D1::RectF(x, 0, x + w, h));
-    return out;
-}
-
-static void UpdateGlassRegion(float x, float w, float h, float r, bool island) {
-    if (!g_glassOn) return;
-    if (g_hidden || h < 1) { HideBlur(); return; }
+static void GlassCapture() {
+    if (!g_glassOn || !g_rt || g_hidden) return;
     RECT wr;
     GetWindowRect(g_hwnd, &wr);
-    std::vector<RECT> rects;
-    for (const D2D1_RECT_F& b : GlassBlocks(x, w, h, r, island)) {
-        RECT k = {wr.left + (LONG)std::lround(b.left * g_scale), wr.top + (LONG)std::lround((g_offY + b.top) * g_scale),
-                  wr.left + (LONG)std::lround(b.right * g_scale), wr.top + (LONG)std::lround((g_offY + b.bottom) * g_scale)};
-        if (k.right > k.left && k.bottom > k.top) rects.push_back(k);
+    int W = wr.right - wr.left, H = wr.bottom - wr.top, sw = std::max(1, W / 4), sh = std::max(1, H / 4);
+    BITMAPINFO bi = {};
+    bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+    bi.bmiHeader.biWidth = sw;
+    bi.bmiHeader.biHeight = -sh;
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    void* bits = nullptr;
+    HDC scr = GetDC(nullptr), mem = CreateCompatibleDC(scr);
+    HBITMAP bmp = CreateDIBSection(scr, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (bmp && bits) {
+        HGDIOBJ old = SelectObject(mem, bmp);
+        SetWindowDisplayAffinity(g_hwnd, WDA_EXCLUDEFROMCAPTURE); // the copy shows what's behind, not Perch itself
+        DwmFlush();
+        SetStretchBltMode(mem, HALFTONE);
+        StretchBlt(mem, 0, 0, sw, sh, scr, wr.left, wr.top, W, H, SRCCOPY | CAPTUREBLT);
+        SetWindowDisplayAffinity(g_hwnd, WDA_NONE);
+        GdiFlush();
+        BoxBlur((DWORD*)bits, sw, sh, 3);
+        BoxBlur((DWORD*)bits, sw, sh, 3); // twice: close to a soft Gaussian
+        SafeRelease(g_glassBmp);
+        D2D1_BITMAP_PROPERTIES bp = D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        if (SUCCEEDED(g_rt->CreateBitmap(D2D1::SizeU(sw, sh), bits, sw * 4, bp, &g_glassBmp))) g_glassAt = wr;
+        SelectObject(mem, old);
     }
-    if (rects.size() == g_blurRects.size() && std::equal(rects.begin(), rects.end(), g_blurRects.begin(), [](const RECT& a, const RECT& b) { return EqualRect(&a, &b); }))
-        return;
-    g_blurRects = rects;
-    while (g_blurWnds.size() < rects.size()) g_blurWnds.push_back(MakeBlurWindow());
-    HDWP dw = BeginDeferWindowPos((int)g_blurWnds.size());
-    for (size_t i = 0; i < g_blurWnds.size(); i++) {
-        if (i < rects.size()) {
-            const RECT& k = rects[i];
-            if (dw) dw = DeferWindowPos(dw, g_blurWnds[i], g_hwnd, k.left, k.top, k.right - k.left, k.bottom - k.top, SWP_NOACTIVATE | SWP_SHOWWINDOW); // just under the notch
-        } else if (dw) dw = DeferWindowPos(dw, g_blurWnds[i], nullptr, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_HIDEWINDOW);
-    }
-    if (dw) EndDeferWindowPos(dw);
+    if (bmp) DeleteObject(bmp);
+    DeleteDC(mem);
+    ReleaseDC(nullptr, scr);
+}
+static void SetGlass(bool on) {
+    g_glassOn = on;
+    SafeRelease(g_glassBmp);
+    if (on) GlassCapture();
+}
+// Under the tint: the blurred copy, inside the notch's outline.
+static void DrawGlassBehind(ID2D1Geometry* shape) {
+    if (!g_glassOn || !g_glassBmp || !shape) return;
+    RECT wr;
+    GetWindowRect(g_hwnd, &wr);
+    if (!EqualRect(&wr, &g_glassAt)) return; // the window moved: wait for a fresh copy
+    g_rt->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), shape), nullptr);
+    g_rt->DrawBitmap(g_glassBmp, D2D1::RectF(0, -g_offY, kWinW, kWinH - g_offY), 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    g_rt->PopLayer();
 }
 
 // ---- pages (open notch) ----
@@ -3556,6 +3549,7 @@ static void Render() {
         g_rt->FillRectangle(D2D1::RectF(kWinW / 2 - 75, 0, kWinW / 2 + 75, 10), g_brush);
     }
     if (shape) {
+        DrawGlassBehind(shape);
         g_brush->SetColor(g_bg);
         g_rt->FillGeometry(shape, g_brush);
         if (g_edge.a > 0) { // Glass: a thin light edge, but not along the top of a Classic notch
@@ -3672,7 +3666,6 @@ static void Render() {
         UPDATELAYEREDWINDOWINFO info = {sizeof(info), nullptr, nullptr, &size, g_memDC, &src, 0, &blend, ULW_ALPHA, &dpx};
         if (!UpdateLayeredWindowIndirect(g_hwnd, &info)) UpdateLayeredWindow(g_hwnd, nullptr, nullptr, &size, g_memDC, &src, 0, &blend, ULW_ALPHA);
     }
-    if (g_set.glass) UpdateGlassRegion(x, w, h, r, island);
 }
 
 // =====================================================================
@@ -3682,7 +3675,9 @@ static void KickAnim() {
     if (!g_animating) { g_animating = true; g_animLast.QuadPart = 0; SetTimer(g_hwnd, TIMER_ANIM, 16, nullptr); } // ~60 frames a second; the springs run on real time
 }
 
+static void GlassCapture();
 static void SetTarget(float t) {
+    if (t > 0.5f && g_target < 0.5f && g_t < 0.05f) GlassCapture(); // opening: a fresh copy of what's behind
     g_target = t;
     KickAnim();
 }
@@ -3779,7 +3774,7 @@ static void OnAnimTick() {
         KillTimer(g_hwnd, TIMER_ANIM);
         if (g_t >= 1.0f) SetTimer(g_hwnd, TIMER_CLOCK, 1000, nullptr);
         else KillTimer(g_hwnd, TIMER_CLOCK);
-        if (g_t == 0.0f) { g_toast = false; PetRecheck(); }
+        if (g_t == 0.0f) { g_toast = false; PetRecheck(); GlassCapture(); }
     }
     Render();
     // Once fully collapsed, hand idle pages back to Windows.
@@ -4004,7 +3999,7 @@ static void ApplySettings(bool announce, bool quiet = false) {
     if (g_hwnd) { ArmWaterTimer(); ClipListen(); ArmCalRemTimer(); AskHotkey(); }
     UpdateKeyboardHook();
     SetGlassColours(g_set.glass);
-    SetBlur(g_set.glass);
+    if (g_set.glass != g_glassOn) SetGlass(g_set.glass);
     PlaceWindow(); // Classic / Floating
     SettingsUI_Refresh(g_set);
     RebuildPages();
@@ -4533,7 +4528,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return MA_NOACTIVATE; // never steal focus from the app you're using
     case WM_TIMER:
         if (wp == TIMER_ANIM) OnAnimTick();
-        else if (wp == TIMER_CLOCK) { if (!g_hidden) Render(); }
+        else if (wp == TIMER_CLOCK) { static int n = 0; if (g_glassOn && ++n % 2 == 0) GlassCapture(); if (!g_hidden) Render(); } // open: the clock, and Glass's copy every 2 s
         else if (wp == TIMER_TODO) { KillTimer(hwnd, TIMER_TODO); CheckTaskReminders(NowMinute()); if (!g_hidden) Render(); }
         else if (wp == TIMER_ASKCOPY) { KillTimer(hwnd, TIMER_ASKCOPY); g_askCopied = 0; if (!g_hidden) Render(); }
         else if (wp == TIMER_CLIP) { KillTimer(hwnd, TIMER_CLIP); g_clipCopied = -1; if (!g_hidden) Render(); }
@@ -4753,7 +4748,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         RevokeDragDrop(hwnd);
         RemoveTrayIcon();
         StopIndicators();
-        SetBlur(false);
+        SetGlass(false);
         PostQuitMessage(0);
         return 0;
     }
