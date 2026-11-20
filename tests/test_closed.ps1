@@ -133,7 +133,7 @@ try {
     # --- bad values ---
     Write-Ini '[Notch]', 'Size=200%'
     Assert (Wait-Until { (Get-ToastText) -like '*Size: use Auto, 100%, 115%, 130%, 150%*' } 3000) "an unknown size is reported ($(Get-ToastText))"
-    Write-Ini '[Notch]', 'Ring=Water'
+    Write-Ini '[Notch]', 'Ring=Moon'
     Assert (Wait-Until { (Get-ToastText) -like '*Ring: use Battery, None*' } 3000) "an unknown ring is reported ($(Get-ToastText))"
 
     # --- budget: the minute timer costs nothing ---
@@ -143,7 +143,8 @@ try {
     $proc = Get-Process Perch
     $cpu0 = $proc.TotalProcessorTime.TotalMilliseconds; Start-Sleep -Seconds 5; $proc.Refresh()
     $cpu = $proc.TotalProcessorTime.TotalMilliseconds - $cpu0
-    Assert ($cpu -lt 30) "idle CPU ~0 with the clock on ($([int]$cpu) ms over 5 s)"
+    if (Test-Flag Playing) { Write-Host "  SKIP  idle CPU: media is playing, so the sound bars' wave is moving ($([int]$cpu) ms over 5 s)" -ForegroundColor Yellow }
+    else { Assert ($cpu -lt 30) "idle CPU ~0 with the clock on ($([int]$cpu) ms over 5 s)" }
     Assert ($proc.WorkingSet64 -lt 13MB) "working set $([math]::Round($proc.WorkingSet64 / 1MB, 1)) MB < 13 MB"
 } finally {
     Stop-Notch

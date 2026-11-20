@@ -61,6 +61,7 @@
 // GUIDs defined locally so the code builds the same with MSVC and MinGW.
 static const GUID kCLSID_MMDeviceEnumerator = {0xBCDE0395, 0xE52F, 0x467C, {0x8E, 0x3D, 0xC4, 0x57, 0x92, 0x91, 0x69, 0x2E}};
 static const GUID kIID_IMMDeviceEnumerator  = {0xA95664D2, 0x9614, 0x4F35, {0xA7, 0x46, 0xDE, 0x8D, 0xB6, 0x36, 0x17, 0xE6}};
+static const GUID kIID_IAudioMeterInformation = {0xC02216F6, 0x8C67, 0x4B5B, {0x9D, 0x00, 0xD0, 0x08, 0xE7, 0x3E, 0x00, 0x64}};
 static const GUID kIID_IAudioEndpointVolume = {0x5CDF2C82, 0x841E, 0x4546, {0x97, 0x22, 0x0C, 0xF7, 0x40, 0x78, 0x22, 0x9A}};
 static const GUID kIID_ID2D1Factory         = {0x06152247, 0x6F50, 0x465A, {0x92, 0x45, 0x11, 0x8B, 0xFD, 0x3B, 0x60, 0x07}};
 static const GUID kIID_IDWriteFactory       = {0xB859EE5A, 0xD838, 0x4B5B, {0xA2, 0xE8, 0x1A, 0xDC, 0x7D, 0x93, 0xDB, 0x48}};
@@ -156,7 +157,8 @@ enum { TIMER_ANIM = 1, TIMER_CLOCK = 2, TIMER_FLASH = 3, TIMER_SETTINGS = 6, TIM
        TIMER_CLIP = 17,                          // clipboard: "Copied" goes
        TIMER_CALREM = 18,                        // calendar: the next event reminder
        TIMER_ASKCOPY = 19,                       // Ask: "Copied" goes
-       TIMER_LYRIC = 20 };                       // lyrics: the next line (only while the Music page shows)                     // Ask: "Copied" goes
+       TIMER_LYRIC = 20,                         // lyrics: the next line (only while the Music page shows)
+       TIMER_WAVE = 21 };                        // the sound bars' next frame (only while they show)                       // lyrics: the next line (only while the Music page shows)                     // Ask: "Copied" goes
 static const int kAskHotkeyId = 1;           // RegisterHotKey id for the Ask Perch shortcut                      // calendar: the next event reminder                        // clipboard: "Copied" goes                       // water: the next reminder (or midnight)                        // hover: open after the peek
 enum { CMD_QUIT = 100, CMD_AUTOSTART = 101,
        CMD_MEDIA_PLAYPAUSE = 104, CMD_MEDIA_NEXT = 105, CMD_MEDIA_PREV = 106, CMD_SHELF_CLEAR = 107,
@@ -313,6 +315,14 @@ static void PetRecheck();
 // post a message to the UI thread.
 // =====================================================================
 static IAudioEndpointVolume* g_outVol;
+// IAudioMeterInformation (MinGW's endpointvolume.h only names it): the output's current peak level.
+struct AudioMeter : IUnknown {
+    virtual HRESULT STDMETHODCALLTYPE GetPeakValue(float* peak) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetMeteringChannelCount(UINT* count) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetChannelsPeakValues(UINT32 count, float* peaks) = 0;
+    virtual HRESULT STDMETHODCALLTYPE QueryHardwareSupport(DWORD* mask) = 0;
+};
+static AudioMeter* g_outMeter; // how loud the output is right now (the sound bars' wave)
 static bool g_outIsHeadphones = false;
 static wchar_t g_outName[128] = L"";
 
@@ -448,6 +458,7 @@ static float AttachDefaultOutput() {
         g_outVol->UnregisterControlChangeNotify(g_volSink);
         SafeRelease(g_outVol);
     }
+    SafeRelease(g_outMeter);
     g_outName[0] = 0;
     g_outIsHeadphones = false;
     float level = -1;
@@ -471,6 +482,7 @@ static float AttachDefaultOutput() {
         g_outVol->RegisterControlChangeNotify(g_volSink);
         g_outVol->GetMasterVolumeLevelScalar(&level);
     }
+    dev->Activate(kIID_IAudioMeterInformation, CLSCTX_ALL, nullptr, (void**)&g_outMeter);
     dev->Release();
     return level;
 }
@@ -641,6 +653,7 @@ static void StopIndicators() {
 
 static void StopAudioNotifications() {
     if (g_outVol) { g_outVol->UnregisterControlChangeNotify(g_volSink); SafeRelease(g_outVol); }
+    SafeRelease(g_outMeter);
     if (g_devEnum) { g_devEnum->UnregisterEndpointNotificationCallback(g_devSink); SafeRelease(g_devEnum); }
     SafeRelease(g_volSink);
     SafeRelease(g_devSink);
@@ -1502,6 +1515,26 @@ static float TasksDoneFraction(); // To-do: tasks done today / tasks (for the Ta
 
 // Header row shared by every page: [page title]  (ring) Wed 18 Nov 2026 00:24
 // Five thin bars, tallest in the middle, centred on c.
+// The sound bars move while music plays: a wave rolling across them, gentle when it's quiet (or muted) and
+// taller when the output is loud right now (the audio meter). ~14 frames a second, only while bars show and
+// something plays; base gives each bar its tallest height.
+static float g_waveLevel = 0;   // the loudness the bars follow (rises at once, falls gently)
+static bool g_waveDrawn = false; // bars were drawn this frame (keeps their timer going)
+static bool g_waving = false;    // the wave's timer is running
+static void WaveHeights(const float* base, float* out) {
+    float peak = 0;
+    if (g_outMeter) g_outMeter->GetPeakValue(&peak);
+    BOOL muted = FALSE;
+    if (g_outVol) g_outVol->GetMute(&muted);
+    if (muted) peak = 0;
+    g_waveLevel = std::max(std::min(1.0f, peak * 1.6f), g_waveLevel * 0.82f);
+    float t = GetTickCount64() % 100000 / 1000.0f;
+    for (int i = 0; i < 5; i++) {
+        float swing = 0.55f + 0.45f * sinf(t * 7.5f + i * 1.25f) * cosf(t * 3.1f - i * 0.7f);
+        out[i] = 2.4f + (base[i] - 2.4f) * (0.45f + 0.55f * g_waveLevel) * swing; // always a gentle wave, bigger when it's loud
+    }
+    g_waveDrawn = true;
+}
 static void DrawSoundBars(D2D1_POINT_2F c, const float* hgt, float pitch, float a) {
     g_brush->SetColor(WithAlpha(g_fg, a));
     for (int i = 0; i < 5; i++) {
@@ -1522,8 +1555,10 @@ static void DrawHeaderStatus(float a) {
     dx += TextWidth(dateStr, g_fmtHdrDate) + 6.4f;
     Text(timeStr, g_fmtHdrTime, D2D1::RectF(dx, y - 10, px + kExpW - 20, y + 10), WithAlpha(g_fg, a));
     if (g_media.hasSession && g_media.playing) {
-        static const float hb[5] = {4, 6.4f, 9.6f, 10.4f, 4.8f};
-        DrawSoundBars(D2D1::Point2F(px + 357.6f, y), hb, 4.4f, a);
+        static const float hb[5] = {6.4f, 9.6f, 12, 10.4f, 6.4f};
+        float wave[5];
+        WaveHeights(hb, wave);
+        DrawSoundBars(D2D1::Point2F(px + 357.6f, y), wave, 4.4f, a);
     }
 }
 
@@ -3588,6 +3623,7 @@ static void Render() {
 
     EnsureArt();
     EnsureShelfIcons();
+    g_waveDrawn = false;
     // Only the notch's own area (and where it was last frame) is redrawn and handed to Windows: the window is
     // 440 x 250 DIPs, the closed pill a fraction of that, so the mascot and the clock cost little.
     float shMax = std::max(Lerp(closedSh, kShoulderOpen, e), 0.0f);
@@ -3643,8 +3679,10 @@ static void Render() {
     if (pillContent > 0) {
         float cy = h / 2;
         if (g_media.hasSession && g_media.playing) {
-            static const float pb[5] = {2.4f, 7.2f, 10.4f, 8, 2.4f};
-            DrawSoundBars(D2D1::Point2F(x + w - 22.2f, cy), pb, 4.2f, pillContent); // 52.8 right of the centre
+            static const float pb[5] = {6.4f, 9.6f, 12, 10.4f, 6.4f};
+            float wave[5];
+            WaveHeights(pb, wave);
+            DrawSoundBars(D2D1::Point2F(x + w - 22.2f, cy), wave, 4.2f, pillContent); // 52.8 right of the centre
         }
         {
             bool ring = (g_set.ring == RING_BATTERY && g_battPct >= 0) || g_set.ring == RING_TASKS || g_set.ring == RING_WATER;
@@ -3727,6 +3765,10 @@ static void Render() {
     g_rt->SetTransform(D2D1::Matrix3x2F::Identity());
     SafeRelease(shape);
     if (g_rt->EndDraw() == D2DERR_RECREATE_TARGET) { ReleaseSurface(); return; }
+    { // the sound bars' wave: frames only while they're on screen
+        if (g_waveDrawn && !g_waving) { SetTimer(g_hwnd, TIMER_WAVE, 70, nullptr); g_waving = true; }
+        else if (!g_waveDrawn && g_waving) { KillTimer(g_hwnd, TIMER_WAVE); g_waving = false; g_waveLevel = 0; }
+    }
 
     POINT src = {0, 0};
     SIZE size = {g_pxW, g_pxH};
@@ -4604,6 +4646,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == TIMER_ANIM) OnAnimTick();
         else if (wp == TIMER_CLOCK) { static int n = 0; if (g_glassOn && ++n % 2 == 0) GlassCapture(); if (!g_hidden) Render(); } // open: the clock, and Glass's copy every 2 s
         else if (wp == TIMER_TODO) { KillTimer(hwnd, TIMER_TODO); CheckTaskReminders(NowMinute()); if (!g_hidden) Render(); }
+        else if (wp == TIMER_WAVE) { if (!g_hidden) Render(); }
         else if (wp == TIMER_LYRIC) { KillTimer(hwnd, TIMER_LYRIC); if (!g_hidden && g_t > 0) Render(); }
         else if (wp == TIMER_ASKCOPY) { KillTimer(hwnd, TIMER_ASKCOPY); g_askCopied = 0; if (!g_hidden) Render(); }
         else if (wp == TIMER_CLIP) { KillTimer(hwnd, TIMER_CLIP); g_clipCopied = -1; if (!g_hidden) Render(); }
