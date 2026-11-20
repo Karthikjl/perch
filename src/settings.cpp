@@ -76,9 +76,9 @@ const wchar_t* kDefaultFile =
     L"[Ask]\r\n"
     L"; Ask Perch sends your questions to Google's Gemini with your own key (Settings > Ask Perch > Paste key;\r\n"
     L"; the key is stored encrypted in ask.key, not here). Model: the Gemini model to use, as Google names it.\r\n"
-    L"; Hotkey: 1 opens Ask Perch from anywhere with Ctrl + Alt + Space.\r\n"
+    L"; Hotkey: the shortcut that opens Ask Perch from anywhere, like Ctrl+Alt+P or Ctrl+Shift+K, or Off.\r\n"
     L"Model=gemini-flash-latest\r\n"
-    L"Hotkey=1\r\n"
+    L"Hotkey=Ctrl+Alt+P\r\n"
     L"\r\n"
     L"[Clipboard]\r\n"
     L"; History: 1 keeps the text you copy in the Shelf's Clipboard tab. Copies that password managers\r\n"
@@ -219,6 +219,46 @@ DWORD WINAPI WatchThread(LPVOID p) {
 
 } // namespace
 
+static const struct { UINT vk; const wchar_t* name; } kKeyNames[] = {
+    {VK_SPACE, L"Space"}, {VK_RETURN, L"Enter"}, {VK_TAB, L"Tab"}, {VK_BACK, L"Backspace"}, {VK_INSERT, L"Insert"}, {VK_DELETE, L"Delete"},
+    {VK_HOME, L"Home"}, {VK_END, L"End"}, {VK_PRIOR, L"PageUp"}, {VK_NEXT, L"PageDown"}, {VK_UP, L"Up"}, {VK_DOWN, L"Down"},
+    {VK_LEFT, L"Left"}, {VK_RIGHT, L"Right"}, {VK_OEM_COMMA, L","}, {VK_OEM_PERIOD, L"."}, {VK_OEM_2, L"/"}, {VK_OEM_1, L";"},
+    {VK_OEM_7, L"'"}, {VK_OEM_4, L"["}, {VK_OEM_6, L"]"}, {VK_OEM_5, L"\\"}, {VK_OEM_MINUS, L"-"}, {VK_OEM_PLUS, L"="}, {VK_OEM_3, L"`"}};
+std::wstring Settings_HotkeyText(UINT mods, UINT vk) {
+    std::wstring key;
+    if ((vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9')) key = (wchar_t)vk;
+    else if (vk >= VK_F1 && vk <= VK_F24) key = L"F" + std::to_wstring(vk - VK_F1 + 1);
+    else for (const auto& k : kKeyNames) if (k.vk == vk) key = k.name;
+    if (key.empty()) return L"";
+    std::wstring t;
+    if (mods & MOD_CONTROL) t += L"Ctrl+";
+    if (mods & MOD_ALT) t += L"Alt+";
+    if (mods & MOD_SHIFT) t += L"Shift+";
+    if (mods & MOD_WIN) t += L"Win+";
+    return t + key;
+}
+bool Settings_ParseHotkey(const std::wstring& text, UINT& mods, UINT& vk) {
+    mods = 0;
+    vk = 0;
+    std::wstring rest = text;
+    while (!rest.empty()) {
+        size_t p = rest.find(L'+', 1); // a "+" right at the start is the key itself ("=" names it, though)
+        std::wstring part = rest.substr(0, p);
+        rest = p == std::wstring::npos ? L"" : rest.substr(p + 1);
+        while (!part.empty() && part.back() == L' ') part.pop_back();
+        while (!part.empty() && part.front() == L' ') part.erase(part.begin());
+        if (!_wcsicmp(part.c_str(), L"Ctrl") || !_wcsicmp(part.c_str(), L"Control")) mods |= MOD_CONTROL;
+        else if (!_wcsicmp(part.c_str(), L"Alt")) mods |= MOD_ALT;
+        else if (!_wcsicmp(part.c_str(), L"Shift")) mods |= MOD_SHIFT;
+        else if (!_wcsicmp(part.c_str(), L"Win")) mods |= MOD_WIN;
+        else if (vk || part.empty()) return false;
+        else if (part.size() == 1 && iswalnum(part[0])) vk = towupper(part[0]);
+        else if ((part[0] == L'F' || part[0] == L'f') && part.size() <= 3 && iswdigit(part[1])) { int n = _wtoi(part.c_str() + 1); if (n < 1 || n > 24) return false; vk = VK_F1 + n - 1; }
+        else { for (const auto& k : kKeyNames) if (!_wcsicmp(part.c_str(), k.name)) vk = k.vk; if (!vk) return false; }
+    }
+    return vk && (mods & (MOD_CONTROL | MOD_ALT | MOD_WIN));
+}
+
 float Settings_SizeFactor(const Settings& s) {
     static const float k[] = {1.0f, 1.0f, 1.15f, 1.3f, 1.5f};
     return k[s.size];
@@ -251,7 +291,16 @@ std::wstring Settings_Load(const std::wstring& file, Settings& s) {
         if (present && ok) s.askModel = m;
         else if (present && problem.empty()) problem = L"Ask: Model should be a Gemini model name like gemini-flash-latest";
     }
-    ReadBool(file, L"Ask", L"Hotkey", s.askHotkey, problem);
+    {
+        bool present;
+        std::wstring h = Read(file, L"Ask", L"Hotkey", present);
+        UINT m, k;
+        if (!present) {}
+        else if (!_wcsicmp(h.c_str(), L"Off") || h == L"0") s.askHotkey = L"Off";
+        else if (h == L"1") s.askHotkey = L"Ctrl+Alt+P";
+        else if (Settings_ParseHotkey(h, m, k)) s.askHotkey = Settings_HotkeyText(m, k);
+        else if (problem.empty()) problem = L"Ask: Hotkey should be like Ctrl+Alt+P (with Ctrl, Alt or Win), or Off";
+    }
     ReadBool(file, L"Clipboard", L"History", s.clipHistory, problem);
     ReadInt(file, L"Clipboard", L"Max", 5, 50, s.clipMax, problem);
     ReadBool(file, L"Clipboard", L"Remember", s.clipRemember, problem);
@@ -336,7 +385,7 @@ void Settings_Save(const std::wstring& file, const Settings& s) {
     WritePrivateProfileStringW(L"Pomodoro", L"ShortBreak", std::to_wstring(s.pomoShort).c_str(), f);
     WritePrivateProfileStringW(L"Pomodoro", L"LongBreak", std::to_wstring(s.pomoLong).c_str(), f);
     WritePrivateProfileStringW(L"Ask", L"Model", s.askModel.c_str(), f);
-    WritePrivateProfileStringW(L"Ask", L"Hotkey", s.askHotkey ? L"1" : L"0", f);
+    WritePrivateProfileStringW(L"Ask", L"Hotkey", s.askHotkey.c_str(), f);
     WritePrivateProfileStringW(L"Clipboard", L"History", s.clipHistory ? L"1" : L"0", f);
     WritePrivateProfileStringW(L"Clipboard", L"Max", std::to_wstring(s.clipMax).c_str(), f);
     WritePrivateProfileStringW(L"Clipboard", L"Remember", s.clipRemember ? L"1" : L"0", f);

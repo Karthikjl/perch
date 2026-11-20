@@ -70,7 +70,7 @@ enum Id {
     W_REMIND, W_GOAL, W_CUP, W_FROM, W_UNTIL,
     C_HISTORY, C_MAX, C_REMEMBER,
     T_REMIND,
-    K_PASTE, K_REMOVE, K_MODEL, K_HOTKEY,
+    K_PASTE, K_REMOVE, K_MODEL, K_HOTKEY, K_HOTKEY_OFF,
     I_SOON, // a Coming soon control (never hit)
 };
 
@@ -83,6 +83,7 @@ float g_scroll = 0, g_contentH = 0;
 int g_hotId = -1, g_hotArg = 0;
 float g_scale = 1;
 bool g_paint = false; // Build() draws (true) or only lays out hits (false)
+bool g_recordKey = false; // Ask Perch > Shortcut: waiting for the keys
 struct Hit { D2D1_RECT_F r; int id, arg; };
 std::vector<Hit> g_hits;
 
@@ -159,7 +160,6 @@ bool GetBool(int id) {
     case H_BT: return g_s.popBluetooth;
     case W_REMIND: return g_s.waterRemind;
     case C_HISTORY: return g_s.clipHistory;
-    case K_HOTKEY: return g_s.askHotkey;
     case C_REMEMBER: return g_s.clipRemember;
     }
     return false;
@@ -186,7 +186,6 @@ void FlipBool(int id) {
     case H_BT: g_s.popBluetooth = !g_s.popBluetooth; break;
     case W_REMIND: g_s.waterRemind = !g_s.waterRemind; break;
     case C_HISTORY: g_s.clipHistory = !g_s.clipHistory; break;
-    case K_HOTKEY: g_s.askHotkey = !g_s.askHotkey; break;
     case C_REMEMBER: g_s.clipRemember = !g_s.clipRemember; break;
     default: return;
     }
@@ -293,8 +292,9 @@ float SegmentsWidth(const std::vector<std::wstring>& opts) {
     for (const std::wstring& o : opts) total += TextW(o.c_str(), g_fSeg) + 22;
     return total;
 }
-void Stepper(float right, float cy, int id, const std::wstring& value, bool soon) {
-    D2D1_POINT_2F plus = D2D1::Point2F(right - 10.4f, cy), minus = D2D1::Point2F(right - 106, cy);
+float Stepper(float right, float cy, int id, const std::wstring& value, bool soon) { // returns its left edge
+    float span = std::max(95.6f, TextW(value.c_str(), g_fCenter) + 40); // wide enough for a long value (a model's name)
+    D2D1_POINT_2F plus = D2D1::Point2F(right - 10.4f, cy), minus = D2D1::Point2F(right - 10.4f - span, cy);
     for (int dir : {-1, 1}) {
         D2D1_POINT_2F c = dir < 0 ? minus : plus;
         Circle(c, 10.4f, Dim(Hex(Hot(id, dir) ? 0x4A4A4C : cStep), soon));
@@ -302,6 +302,7 @@ void Stepper(float right, float cy, int id, const std::wstring& value, bool soon
         AddHit(D2D1::RectF(c.x - 12, c.y - 12, c.x + 12, c.y + 12), soon ? I_SOON : id, dir);
     }
     Text(value.c_str(), g_fCenter, D2D1::RectF(minus.x + 12, cy - 10, plus.x - 12, cy + 10), Dim(Hex(0xFFFFFF), soon));
+    return minus.x - 10.4f;
 }
 void Button(D2D1_RECT_F r, const wchar_t* label, int id, bool soon, int color = cButton) {
     Fill(r, (r.bottom - r.top) / 2, Dim(Hex(Hot(id) ? 0x2A73DB : color), soon));
@@ -349,7 +350,6 @@ void Card(const std::vector<Row>& rows) {
         float ty = r.kind == RK_SEGWIDE ? y + 16 : r.sub ? y + 15.6f : y + rh / 2;
         IDWriteTextFormat* tf = r.kind == RK_LABEL ? g_fSub : g_fRow;
         Text(r.title, tf, D2D1::RectF(kCardL + kPadIn, ty - 10, right - 150, ty + 10), r.kind == RK_LABEL ? sc : tc);
-        if (r.sub && r.kind != RK_LABEL) Text(r.sub, g_fSub, D2D1::RectF(kCardL + kPadIn, ty + 6, kCardR - 60, ty + 26), sc);
         float cy = r.kind == RK_SEGWIDE ? ty : y + rh / 2;
         float badgeRight = right;
         switch (r.kind) {
@@ -363,7 +363,7 @@ void Card(const std::vector<Row>& rows) {
         case RK_SEGWIDE:
             Segments(D2D1::RectF(kCardL + kPadIn, y + 50.4f, right, y + 72), r.opts, r.id, r.soon ? 0 : GetChoice(r.id), r.soon, true);
             break;
-        case RK_STEP: Stepper(right, cy, r.id, r.soon ? (r.opts.empty() ? L"" : r.opts[0]) : StepText(r.id), r.soon); badgeRight = right - 128; break;
+        case RK_STEP: badgeRight = Stepper(right, cy, r.id, r.soon ? (r.opts.empty() ? L"" : r.opts[0]) : StepText(r.id), r.soon) - 12; break;
         case RK_TEXT:
             if (!r.opts.empty()) Text(r.opts[0].c_str(), g_fRight, D2D1::RectF(right - 260, cy - 10, right, cy + 10), Dim(Hex(0xB0B0B4), r.soon));
             badgeRight = right - (r.opts.empty() ? 0 : TextW(r.opts[0].c_str(), g_fRight) + 12);
@@ -379,6 +379,12 @@ void Card(const std::vector<Row>& rows) {
             break;
         }
         case RK_LABEL: break;
+        }
+        if (r.sub && r.kind != RK_LABEL) { // the subtitle stops short of the controls on its right
+            D2D1_RECT_F sr = D2D1::RectF(kCardL + kPadIn, ty + 6, r.kind == RK_SEGWIDE || r.kind == RK_TOGGLE ? kCardR - 60 : std::max(kCardL + kPadIn + 40, badgeRight - 6), ty + 26);
+            if (g_paint) g_rt->PushAxisAlignedClip(sr, D2D1_ANTIALIAS_MODE_ALIASED);
+            Text(r.sub, g_fSub, sr, sc);
+            if (g_paint) g_rt->PopAxisAlignedClip();
         }
         if (r.soon && r.kind != RK_LABEL) SoonBadge(badgeRight, r.kind == RK_SEGWIDE ? ty : cy);
         y += rh;
@@ -658,9 +664,17 @@ void BuildAsk() {
            hasKey ? std::vector<int>{K_PASTE, K_REMOVE} : std::vector<int>{K_PASTE}},
           {RK_LABEL, L"Free key: aistudio.google.com > Get API key, copy it, then Paste key", nullptr, I_NONE, false, {}, {}}});
     Label(L"Model");
-    Card({{RK_STEP, L"Model", models.empty() ? (hasKey ? L"The models your key can use show here" : L"Add your key to pick one") : L"Use the arrows to pick one", K_MODEL, false, {}, {}}});
+    Card({{RK_STEP, L"Model", models.empty() ? (hasKey ? L"From your key" : L"Add a key first") : L"Pick with the arrows", K_MODEL, false, {}, {}}});
     Label(L"Ask");
-    Card({{RK_TOGGLE, L"Shortcut", L"Ctrl + Alt + Space opens Ask Perch from anywhere", K_HOTKEY, false, {}, {}},
+    bool off = !_wcsicmp(g_s.askHotkey.c_str(), L"Off"), taken = !off && g_host.askHotkeyOk && !g_host.askHotkeyOk();
+    std::wstring shown = g_recordKey ? L"Press keys\x2026" : off ? L"Set shortcut" : g_s.askHotkey;
+    for (size_t p; !g_recordKey && (p = shown.find(L'+')) != std::wstring::npos && p + 1 < shown.size();) shown.replace(p, 1, L" \x00B7 "); // Ctrl · Alt · P
+    const wchar_t* sub = g_recordKey ? L"Press keys with Ctrl, Alt or Win"
+                       : taken ? L"Taken by another app. Click to change"
+                       : off ? L"Off (right-click > Ask Perch works)"
+                             : L"Opens Ask Perch. Click to change";
+    Card({{RK_BUTTONS, L"Shortcut", sub, K_HOTKEY, false, off ? std::vector<std::wstring>{shown} : std::vector<std::wstring>{shown, L"Turn off"},
+           off ? std::vector<int>{K_HOTKEY} : std::vector<int>{K_HOTKEY, K_HOTKEY_OFF}},
           {RK_TEXT, L"Privacy", L"Questions go only to Google, using your key", I_NONE, false, {}, {}}});
 }
 void BuildTodo() {
@@ -858,6 +872,7 @@ const Hit* HitAt(float x, float y) {
 void SetSection(int s) {
     g_sec = s < 0 || s >= SEC_COUNT ? SEC_GENERAL : s;
     g_scroll = 0;
+    g_recordKey = false;
     Redraw();
 }
 
@@ -901,6 +916,8 @@ void Activate(const Hit& h) {
     case B_FILE: if (g_host.openFile) g_host.openFile(); break;
     case K_PASTE: if (g_host.askPaste) g_host.askPaste(); break;
     case K_REMOVE: if (g_host.askRemove) g_host.askRemove(); break;
+    case K_HOTKEY: g_recordKey = !g_recordKey; break; // the next keys pressed become the shortcut
+    case K_HOTKEY_OFF: g_recordKey = false; g_s.askHotkey = L"Off"; g_host.commit(g_s); break;
     case B_RESET: {
         Settings d;
         d.calLink = g_s.calLink; // the calendar link isn't a preference: keep it
@@ -978,6 +995,22 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     case WM_KEYDOWN:
+    case WM_SYSKEYDOWN:
+        if (g_recordKey) { // recording the Ask Perch shortcut
+            if (wp == VK_ESCAPE) { g_recordKey = false; Redraw(); return 0; }
+            if (wp == VK_SHIFT || wp == VK_CONTROL || wp == VK_MENU || wp == VK_LWIN || wp == VK_RWIN) return 0;
+            auto down = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }; // the keys held right now
+            UINT mods = (down(VK_CONTROL) ? MOD_CONTROL : 0) | (down(VK_MENU) ? MOD_ALT : 0) | (down(VK_SHIFT) ? MOD_SHIFT : 0) |
+                        (down(VK_LWIN) || down(VK_RWIN) ? MOD_WIN : 0);
+            std::wstring t = Settings_HotkeyText(mods, (UINT)wp);
+            if (t.empty() || !(mods & (MOD_CONTROL | MOD_ALT | MOD_WIN))) return 0; // needs Ctrl, Alt or Win, and a key with a name
+            g_recordKey = false;
+            g_s.askHotkey = t;
+            g_host.commit(g_s);
+            Redraw();
+            return 0;
+        }
+        if (msg == WM_SYSKEYDOWN) break;
         if (wp == VK_ESCAPE) { DestroyWindow(h); return 0; }
         if (wp == VK_DOWN || wp == VK_UP) { SetSection((g_sec + (wp == VK_DOWN ? 1 : SEC_COUNT - 1)) % SEC_COUNT); return 0; }
         return 0;
@@ -994,6 +1027,7 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_DESTROY:
         ReleaseAll();
         g_wnd = nullptr;
+        g_recordKey = false;
         SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1); // hand the window's pages back
         return 0;
     }

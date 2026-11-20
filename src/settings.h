@@ -44,7 +44,7 @@ struct Settings {
     bool shelfEmpty = false;
     // Clipboard history in the Shelf. [Clipboard]
     std::wstring askModel = L"gemini-flash-latest"; // [Ask] Model: the Gemini model questions go to (picked in Settings)
-    bool askHotkey = true;                        // [Ask] Hotkey: Ctrl + Alt + Space opens Ask Perch
+    std::wstring askHotkey = L"Ctrl+Alt+P";      // [Ask] Hotkey: opens Ask Perch from anywhere (any Ctrl / Alt / Win combination), or Off
     bool clipHistory = false;    // History: keep the text you copy
     int clipMax = 20;            // Max: items kept, 5-50
     bool clipRemember = false;   // Remember: keep them after a restart (encrypted for this Windows account)     // Shelf: "Empty shelf at start"
@@ -53,6 +53,9 @@ struct Settings {
 };
 
 float Settings_SizeFactor(const Settings& s); // 1.0, 1.15, 1.3 or 1.5
+// "Ctrl+Alt+P" <-> RegisterHotKey's modifiers (MOD_*) and virtual key. Needs Ctrl, Alt or Win, and one other key.
+bool Settings_ParseHotkey(const std::wstring& text, UINT& mods, UINT& vk);
+std::wstring Settings_HotkeyText(UINT mods, UINT vk); // "Ctrl+Alt+P"; empty if the key has no name
 
 // Pages the notch can show, in their default order. Names are what [Pages] Order / Hidden use.
 enum PageKind { PK_MUSIC = 0, PK_POMODORO, PK_SHELF, PK_TODO, PK_WATER, PK_WIDGETS, PK_COUNT };

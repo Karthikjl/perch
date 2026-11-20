@@ -82,7 +82,7 @@ try {
     # Control ids (settingsui.cpp); the window tells where each one is.
     $C = @{ Close = 1; Section = 2; Autostart = 3; Size = 4; Minimal = 5; Mascot = 6; Clock = 7; Sounds = 8; HideFs = 9; Ring = 10; PageUp = 11; PageDown = 12; PageToggle = 13;
             Style = 14; Glass = 15; Tint = 16; Open = 17; PageIcons = 18; Speed = 19; TStart = 20; TEnd = 21; Snooze = 22; Week = 23; View = 24;
-            Focus = 28; Short = 29; Long = 30; ShelfEmpty = 31; Volume = 32; Reset = 40; PetStyle = 41; WRemind = 42; WGoal = 43; WCup = 44; WFrom = 45; WUntil = 46; KModel = 53; KHotkey = 54 }
+            Focus = 28; Short = 29; Long = 30; ShelfEmpty = 31; Volume = 32; Reset = 40; PetStyle = 41; WRemind = 42; WGoal = 43; WCup = 44; WFrom = 45; WUntil = 46; KModel = 53; KHotkey = 54; KHotkeyOff = 55 }
     function Section([int]$s) { [int][NotchTest]::SendMessage($setWin, [NotchTest]::WM_APP + 1, [IntPtr]$s, [IntPtr]::Zero) }
     function Spot([int]$id, [int]$arg = 0) { [int64][NotchTest]::SendMessage($setWin, [NotchTest]::WM_APP + 2, [IntPtr]$id, [IntPtr]$arg) }
     function Tap([int]$id, [int]$arg = 0) {
@@ -152,10 +152,17 @@ try {
     Tap $C.ShelfEmpty | Out-Null
     Assert (Wait-Until { (IniText) -match '(?m)^StartEmpty=1' } 2000) 'Shelf: Empty shelf at start'
     Section 6 | Out-Null
-    Assert ((Spot $C.KHotkey) -ge 0) 'Ask Perch: the section is live (shortcut switch)'
-    Tap $C.KHotkey | Out-Null
-    Assert (Wait-Until { (IniText) -match '(?m)^Hotkey=0' } 2000) 'Ask Perch: the shortcut can be switched off'
-    Tap $C.KHotkey | Out-Null
+    Assert ((Spot $C.KHotkey) -ge 0) 'Ask Perch: the section is live (shortcut button)'
+    Tap $C.KHotkey | Out-Null # start recording, then press Ctrl + Shift + K
+    [SetProbe]::PostMessage($setWin, 0x100, [IntPtr]0x4B, [IntPtr]::Zero) | Out-Null # K alone (no Ctrl / Alt / Win) is not taken
+    Start-Sleep -Milliseconds 300
+    Assert (-not ((IniText) -match '(?m)^Hotkey=K\s*$')) '...a key without Ctrl, Alt or Win is ignored'
+    [NotchTest]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero); [NotchTest]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero)
+    [SetProbe]::PostMessage($setWin, 0x100, [IntPtr]0x4B, [IntPtr]::Zero) | Out-Null; Start-Sleep -Milliseconds 300
+    [NotchTest]::keybd_event(0x10, 0, 2, [UIntPtr]::Zero); [NotchTest]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
+    Assert (Wait-Until { (IniText) -match '(?m)^Hotkey=Ctrl\+Shift\+K' } 2000) 'Ask Perch: pressing Ctrl + Shift + K makes it the shortcut'
+    Tap $C.KHotkeyOff | Out-Null
+    Assert (Wait-Until { (IniText) -match '(?m)^Hotkey=Off' } 2000) '...and Turn off turns it off'
     Section 9 | Out-Null
     Tap $C.WRemind | Out-Null
     Assert (Wait-Until { (IniText) -match '(?m)^Reminders=1' } 2000) 'Water: the reminders switch turns them on'

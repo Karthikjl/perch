@@ -151,7 +151,7 @@ enum { TIMER_ANIM = 1, TIMER_CLOCK = 2, TIMER_FLASH = 3, TIMER_SETTINGS = 6, TIM
        TIMER_CLIP = 17,                          // clipboard: "Copied" goes
        TIMER_CALREM = 18,                        // calendar: the next event reminder
        TIMER_ASKCOPY = 19 };                     // Ask: "Copied" goes
-static const int kAskHotkeyId = 1;           // RegisterHotKey id for Ctrl + Alt + Space                      // calendar: the next event reminder                        // clipboard: "Copied" goes                       // water: the next reminder (or midnight)                        // hover: open after the peek
+static const int kAskHotkeyId = 1;           // RegisterHotKey id for the Ask Perch shortcut                      // calendar: the next event reminder                        // clipboard: "Copied" goes                       // water: the next reminder (or midnight)                        // hover: open after the peek
 enum { CMD_QUIT = 100, CMD_AUTOSTART = 101,
        CMD_MEDIA_PLAYPAUSE = 104, CMD_MEDIA_NEXT = 105, CMD_MEDIA_PREV = 106, CMD_SHELF_CLEAR = 107,
        CMD_SETTINGS = 109, CMD_POMO_TOGGLE = 110, CMD_POMO_RESET = 111,
@@ -3240,7 +3240,7 @@ static ID2D1PathGeometry* PillGeometry(float x, float w, float h, float r, float
 }
 
 // ---- Ask Perch: questions to Gemini with your own key ----
-// Ctrl + Alt + Space (or right-click > Ask Perch) opens the notch on a question field; Enter sends it on a
+// The shortcut (Ctrl + Alt + P unless changed; right-click > Ask Perch too) opens the notch on a question field; Enter sends it on a
 // worker thread (ask.cpp) and the answer shows under it, scrollable. Esc or switching away closes it.
 // The key is kept encrypted for this Windows account (DPAPI) in ask.key, never in settings.ini. The model
 // is the user's choice: Settings lists the models their key can use.
@@ -3486,11 +3486,20 @@ static void AskRemoveKey() {
     g_askModelsTried = false;
     SettingsUI_Refresh(g_set);
 }
-static void AskHotkey() { // follow the setting
+static bool g_askHotkeyOk = true; // false: the shortcut belongs to another app
+static void AskHotkey() { // follow the setting: (re)register the shortcut when it changes
+    static std::wstring now; // what's registered
     static bool on = false;
-    if (g_set.askHotkey && !on) on = RegisterHotKey(g_hwnd, kAskHotkeyId, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_SPACE) != 0;
-    else if (!g_set.askHotkey && on) { UnregisterHotKey(g_hwnd, kAskHotkeyId); on = false; }
+    if (g_set.askHotkey == now) return;
+    if (on) UnregisterHotKey(g_hwnd, kAskHotkeyId);
+    on = false;
+    now = g_set.askHotkey;
+    UINT mods, vk;
+    if (Settings_ParseHotkey(now, mods, vk)) on = RegisterHotKey(g_hwnd, kAskHotkeyId, mods | MOD_NOREPEAT, vk) != 0;
+    g_askHotkeyOk = on || !_wcsicmp(now.c_str(), L"Off");
+    SettingsUI_Refresh(g_set);
 }
+static bool UiAskHotkeyOk() { return g_askHotkeyOk; }
 
 static void Render() {
     if (!g_rt && !CreateSurface()) return;
@@ -4046,7 +4055,7 @@ static void UiCalStatus(wchar_t* out, int n) { // the status under "Calendar lin
 static void OpenSettings(int section = -1) {
     SettingsUIHost host = {UiCommit, OpenSettingsFile, AutostartEnabled, SetAutostart,
                            CalPasteLink, []() { CalFetch(true); }, []() { CalSetLink(L""); }, UiCalStatus, UiWaterStatus,
-                           AskPasteKey, AskRemoveKey, UiAskStatus, UiAskModels};
+                           AskPasteKey, AskRemoveKey, UiAskStatus, UiAskModels, UiAskHotkeyOk};
     SettingsUI_Show(g_inst, g_set, host, section);
 }
 
@@ -4233,7 +4242,7 @@ static void ShowMenu(POINT screenPt) {
     AppendMenuW(m, MF_STRING | (AutostartEnabled() ? MF_CHECKED : 0), CMD_AUTOSTART, L"Start with Windows");
     AppendMenuW(m, MF_STRING | (g_shelf.empty() ? MF_GRAYED : 0), CMD_SHELF_CLEAR, L"Clear shelf");
     AppendMenuW(m, MF_STRING | (g_set.minimal ? MF_CHECKED : 0), CMD_MINIMAL, L"Minimal notch"); // a small tab while nothing plays
-    AppendMenuW(m, MF_STRING, CMD_ASK, L"Ask Perch\tCtrl+Alt+Space");
+    AppendMenuW(m, MF_STRING, CMD_ASK, (L"Ask Perch" + (g_askHotkeyOk && _wcsicmp(g_set.askHotkey.c_str(), L"Off") ? L"\t" + g_set.askHotkey : std::wstring())).c_str());
     AppendMenuW(m, MF_STRING, CMD_CAL_PASTE, g_set.calLink.empty() ? L"Paste calendar link" : L"Paste new calendar link");
     if (!g_set.calLink.empty()) {
         AppendMenuW(m, MF_STRING, CMD_CAL_REFRESH, L"Refresh calendar");

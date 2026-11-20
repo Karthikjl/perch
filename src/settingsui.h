@@ -20,6 +20,7 @@ struct SettingsUIHost {
     void (*askRemove)();
     void (*askStatus)(wchar_t* out, int n);     // "Not set", "Saved · 12 models"
     void (*askModels)(std::vector<std::wstring>& out); // the models the key may use (empty until Google answers)
+    bool (*askHotkeyOk)();                      // false: the Ask shortcut is taken by another app
 };
 
 // Sections, in sidebar order.
