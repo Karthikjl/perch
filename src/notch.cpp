@@ -139,6 +139,7 @@ enum {
     WM_APP_TRAY = WM_APP + 31,          // the tray icon was clicked
     WM_APP_STRAY = WM_APP + 32,
     WM_APP_UPDATE_DONE = WM_APP + 39,   // an update check or download finished: lp = UpdateJob*
+    WM_APP_RELOAD = WM_APP + 41,        // perchctl changed a file: wp 1 = tasks.txt, 2 = water.txt (read it again)
     WM_APP_UPDATE = WM_APP + 40,        // tests: wp 0 = status; 1 = check now; 2 = install
     WM_APP_LYRICS_DONE = WM_APP + 37,   // a lyrics lookup finished: lp = LyricsJob*
     WM_APP_LYRICS = WM_APP + 38,        // tests: wp 0 = status | lines << 4; 1 = look up the song in global atom lp ("title|artist|seconds");
@@ -4890,6 +4891,16 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_APP_CAL_DONE:
         OnCalDone((CalJob*)lp);
         return 0;
+    case WM_APP_RELOAD: // the command line or an AI tool (perchctl) changed a file
+        if (wp == 1) { // queued task reminders point at old positions in the list: drop them (the timer finds what's due)
+            LoadTasks();
+            g_remQueue.erase(std::remove_if(g_remQueue.begin(), g_remQueue.end(), [](const Reminder& r) { return r.kind == 1 || r.kind == 2; }), g_remQueue.end());
+            ArmTodoTimer();
+        }
+        else if (wp == 2) { LoadWater(); ArmWaterTimer(); if (SettingsUI_IsOpen()) SettingsUI_Refresh(g_set); }
+        else return 0;
+        if (!g_hidden) Render();
+        return 1;
     case WM_APP_UPDATE_DONE:
         OnUpdateDone((UpdateJob*)lp);
         return 0;

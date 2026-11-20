@@ -32,6 +32,13 @@ jobs:
           g++ --version
           build.bat
 
+      - name: Build perchctl.exe (command line and MCP server)
+        shell: pwsh
+        run: |
+          cd rust
+          cargo build --release --locked
+          Copy-Item target/release/perchctl.exe ../build/perchctl.exe
+
       - name: Create the release
         shell: pwsh
         env:
@@ -39,4 +46,4 @@ jobs:
         run: |
           $tag = '${{ github.ref_name }}'
           git fetch --force origin "refs/tags/${tag}:refs/tags/${tag}"
-          gh release create $tag build/Perch.exe --title "Perch $tag" --notes-from-tag
+          gh release create $tag build/Perch.exe build/perchctl.exe --title "Perch $tag" --notes-from-tag

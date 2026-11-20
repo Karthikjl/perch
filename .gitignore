@@ -20,3 +20,6 @@ tests/screenshots/
 *.swp
 Thumbs.db
 desktop.ini
+
+# Rust build output
+rust/target/

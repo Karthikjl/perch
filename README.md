@@ -59,6 +59,40 @@ Requires Windows 10 (2004 or later) or Windows 11, x64. Perch updates itself fro
 - **Shelf from the command line:** `Perch.exe --shelf "C:\path\file.pdf" "C:\path\photo.png"` adds files to the running copy.
 - **settings.ini:** every option has a comment. Delete a line, or the whole file, to go back to the default.
 
+## Command line and AI tools (MCP)
+
+`perchctl` manages Perch's to-do list and water from a terminal, a script, or an AI assistant. It works on
+the same files as the notch, and a running Perch shows each change straight away. It's written in Rust and
+builds on Windows, macOS and Linux (the notch itself is Windows-only for now).
+
+```
+perchctl task add "Call Mum" --at 18:00 --until 18:30
+perchctl task add "Stretch" --daily
+perchctl task list
+perchctl task done 2
+perchctl task remove 2
+perchctl water add            # one cup
+perchctl water add 500
+perchctl water status
+```
+
+Add `--json` to any command for output a script can read.
+
+**Use it from Claude or another AI tool.** `perchctl mcp` is an MCP server (Model Context Protocol) with the
+tools `add_task`, `list_tasks`, `complete_task`, `remove_task`, `add_water` and `water_status`.
+
+- **Claude Desktop:** add to `claude_desktop_config.json`:
+  ```json
+  { "mcpServers": { "perch": { "command": "C:\\path\\to\\perchctl.exe", "args": ["mcp"] } } }
+  ```
+- **Claude Code:**
+  ```
+  claude mcp add perch -- C:\path\to\perchctl.exe mcp
+  ```
+
+`perchctl.exe` comes with each release. The MCP server only runs on your PC, over stdin and stdout: nothing
+listens on the network.
+
 ## Privacy
 
 Perch doesn't send anything anywhere unless you ask it to. It downloads your calendar only if you add a
@@ -80,7 +114,8 @@ model you choose, using that key). Everything it keeps stays in `%APPDATA%\Perch
 
 ## Building from source
 
-You need a C++17 compiler: MinGW-w64 (recommended) or Visual Studio Build Tools.
+You need a C++17 compiler: MinGW-w64 (recommended) or Visual Studio Build Tools. `perchctl` (the command
+line and MCP server) needs Rust from [rustup.rs](https://rustup.rs): `cd rust` then `cargo build --release`.
 
 ```
 winget install BrechtSanders.WinLibs.POSIX.UCRT
@@ -106,6 +141,7 @@ it matters, and skip rather than click into another app.
 
 | Path | What it is |
 |---|---|
+| `rust/` | The Rust core (`core`: to-do, water, settings, shared by every platform) and `perchctl` (`cli`: command line and MCP server) |
 | `src/notch.cpp` | The app: window, drawing, animation, pages, pop-ups, shelf, tray icon |
 | `src/mascot.cpp` | The mascot's looks, shared by the notch and the settings previews |
 | `src/media.cpp` | Now playing and media controls (Windows media session API) |

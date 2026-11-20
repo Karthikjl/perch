@@ -1,0 +1,16 @@
+[package]
+name = "perchctl"
+description = "Perch from the command line, and as an MCP server for AI tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "perchctl"
+path = "src/main.rs"
+
+[dependencies]
+perch-core = { path = "../core" }
+clap = { version = "4.5.20", features = ["derive"] }
+serde_json = "1.0.132"

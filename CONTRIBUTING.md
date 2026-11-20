@@ -45,6 +45,23 @@ set PERCH_DATA_DIR=%TEMP%\perch-dev
 build\Perch.exe
 ```
 
+### The Rust part (perchctl)
+
+`rust/` holds the cross-platform core and `perchctl`, the command line and MCP server. Install Rust from
+[rustup.rs](https://rustup.rs) (on Windows the GNU toolchain works with MinGW), then:
+
+```
+cd rust
+cargo test
+cargo build --release
+```
+
+The result is `rust/target/release/perchctl` (`.exe` on Windows). Try the MCP server by hand:
+
+```
+echo {"jsonrpc":"2.0","id":1,"method":"tools/list"} | rust\target\release\perchctl mcp
+```
+
 ## Test
 
 Every feature has a PowerShell test in `tests/`. Run them all (this builds first and starts a fresh

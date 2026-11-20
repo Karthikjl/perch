@@ -37,3 +37,31 @@ jobs:
           name: Perch-${{ github.sha }}
           path: build/Perch.exe
           if-no-files-found: error
+
+  # The Rust core and perchctl (command line + MCP server) build and pass their tests on every system.
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build perchctl
+        run: cargo build --release --locked
+
+      - name: Upload perchctl
+        uses: actions/upload-artifact@v4
+        with:
+          name: perchctl-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            rust/target/release/perchctl
+            rust/target/release/perchctl.exe
+          if-no-files-found: error

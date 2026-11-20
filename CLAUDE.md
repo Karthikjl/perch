@@ -70,6 +70,8 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 Native C++ (Win32 + Direct2D) notch app for Windows. Code is in `src/`, the logo and icon in `assets/`, tests in `tests/`. See README.md for features.
 
+**Rust:** `rust/` is a Cargo workspace: `core` (perch-core: to-do, water, settings, in the same files as the app) and `cli` (`perchctl`: command line and `perchctl mcp`, an MCP server over stdio). `cargo test` / `cargo build --release` in `rust/`; rustup lives in `%USERPROFILE%\.cargo\bin` (GNU toolchain). After changing a file, perchctl sends the running app `WM_APP + 41` (wp 1 tasks, 2 water) to reload. This is the start of moving Perch to Rust for macOS and Linux: new shared logic goes in `core`.
+
 **Naming:** the app is Perch: `Perch.exe`, window class `PerchWindow`, data in `%APPDATA%\Perch` (tests: `%PERCH_DATA_DIR%`), `Perch` under `HKCU\...\Run`. "Notch" in the code (`notch.cpp`, `[Notch]` in settings.ini, test helper names) means the notch itself.
 
 **Build:** `build.bat` (MinGW from winget, else MSVC `cl` on PATH) builds `build\Perch.exe`. Quit the running copy first (right-click → Quit, or `Stop-Process -Name Perch`), since Windows locks a running `.exe`.
