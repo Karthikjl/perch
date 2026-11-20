@@ -58,6 +58,55 @@ try {
 
     Assert ((Ctl task remove 1).Code -eq 0 -and (Todo).Tasks -eq 1) 'task remove 1'
 
+    # --- calendar, ask and update, against fake services on 127.0.0.1 ---
+    $sync = [hashtable]::Synchronized(@{ Bodies = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList)) })
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0); $listener.Start(); $port = $listener.LocalEndpoint.Port
+    $today = (Get-Date).ToString('yyyyMMdd'); $tomorrow = (Get-Date).AddDays(1).ToString('yyyyMMdd')
+    $sync.Ics = "BEGIN:VCALENDAR`r`nBEGIN:VEVENT`r`nDTSTART:${today}T100000`r`nDTEND:${today}T110000`r`nSUMMARY:Standup`r`nEND:VEVENT`r`nBEGIN:VEVENT`r`nDTSTART;VALUE=DATE:${tomorrow}`r`nSUMMARY:Holiday`r`nEND:VEVENT`r`nEND:VCALENDAR`r`n"
+    $server = [powershell]::Create()
+    $server.AddScript({ param($l, $sync)
+        while ($true) { try { $c = $l.AcceptTcpClient() } catch { break }
+            try { $st = $c.GetStream(); $r = New-Object IO.StreamReader($st); $line = $r.ReadLine(); $len = 0; $key = ''
+                while (($h = $r.ReadLine()) -ne $null -and $h -ne '') { if ($h -match '^Content-Length:\s*(\d+)') { $len = [int]$Matches[1] }; if ($h -match '^x-goog-api-key:\s*(.+)$') { $key = $Matches[1].Trim() } }
+                $sb = New-Object Text.StringBuilder; $n = 0; while ($n -lt $len) { $ch = $r.Read(); if ($ch -lt 0) { break }; [void]$sb.Append([char]$ch); $n += [Text.Encoding]::UTF8.GetByteCount([string][char]$ch) }
+                $sync.Bodies.Add("$line | $key | $($sb.ToString())") | Out-Null
+                $path = ($line -split ' ')[1]
+                if ($path -eq '/cal.ics') { $out = $sync.Ics }
+                elseif ($path -eq '/latest') { $out = '{"tag_name":"v9.9.9","assets":[{"name":"Perch.exe","browser_download_url":"https://example.invalid/Perch.exe"}]}' }
+                elseif ($sb.ToString() -like '*Remind me to stretch*') { $out = '{"candidates":[{"content":{"parts":[{"functionCall":{"name":"add_task","args":{"title":"Stretch break","start":"15:00"}}}]}}]}' }
+                else { $out = '{"candidates":[{"content":{"parts":[{"text":"**Paris** is the capital of France."}]}}]}' }
+                $b = [Text.Encoding]::UTF8.GetBytes($out); $hd = [Text.Encoding]::ASCII.GetBytes("HTTP/1.1 200 OK`r`nContent-Length: $($b.Length)`r`nConnection: close`r`n`r`n")
+                $st.Write($hd, 0, $hd.Length); $st.Write($b, 0, $b.Length); $st.Flush() } catch {} finally { $c.Close() } }
+    }).AddArgument($listener).AddArgument($sync) | Out-Null
+    $serverRun = $server.BeginInvoke()
+    Set-Content -LiteralPath (Join-Path $work 'settings.ini') -Value '[Calendar]', "Link=http://127.0.0.1:$port/cal.ics" -Encoding ASCII
+    Start-Sleep -Milliseconds 400
+    $r = Ctl calendar
+    Assert ($r.Code -eq 0 -and $r.Out -eq "Today:`r`n  10:00-11:00  Standup" -or $r.Out -eq "Today:`n  10:00-11:00  Standup") "calendar (today) ($($r.Out -replace "`r?`n", ' / '))"
+    $j = (Ctl calendar tomorrow --json).Out | ConvertFrom-Json
+    Assert ($j.events.Count -eq 1 -and $j.events[0].title -eq 'Holiday' -and $j.events[0].all_day) 'calendar tomorrow --json: the all-day event'
+    Assert (Test-Path (Join-Path $work 'calendar.ics')) '...and a copy is kept for when offline'
+
+    # ask: the key the app saved (encrypted for this Windows account) is read by perchctl too
+    Add-Type 'using System; using System.Runtime.InteropServices; public static class CliAtom { [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern ushort GlobalAddAtom(string s); }' -ErrorAction SilentlyContinue
+    $atom = [CliAtom]::GlobalAddAtom('AIzaCliTestKey0123456789abcdefghijklmno')
+    [NotchTest]::SendMessage((Get-NotchWindow), [NotchTest]::WM_APP + 36, [IntPtr]4, [IntPtr][int]$atom) | Out-Null
+    $env:PERCH_GEMINI_URL = "http://127.0.0.1:$port/v1beta"
+    $r = Ctl ask What is the capital of France?
+    Assert ($r.Code -eq 0 -and $r.Out -eq 'Paris is the capital of France.') "ask ($($r.Out))"
+    $req = $sync.Bodies | Where-Object { $_ -like 'POST /v1beta/models/gemini-flash-latest:generateContent*' } | Select-Object -Last 1
+    Assert ($req -like '* | AIzaCliTestKey0123456789abcdefghijklmno | *What is the capital of France?*') "...with the key Perch saved, to the chosen model"
+    $before = (Todo).Tasks
+    $r = Ctl ask Remind me to stretch at 3pm
+    Assert ($r.Out -like 'Added task *: Stretch break (15:00)' -and (Todo).Tasks -eq $before + 1) "ask can add a real task, and Perch shows it ($($r.Out))"
+    Remove-Item Env:\PERCH_GEMINI_URL
+
+    $env:PERCH_UPDATE_URL = "http://127.0.0.1:$port/latest"
+    $r = Ctl update
+    Assert ($r.Out -like 'Perch 9.9.9 is available (you have 0.1.0)*') "update ($($r.Out))"
+    $env:PERCH_UPDATE_URL = 'http://127.0.0.1:9/releases/latest'
+    $listener.Stop(); $server.Dispose()
+
     # --- MCP ---
     $psi = New-Object System.Diagnostics.ProcessStartInfo $ctl, 'mcp'
     $psi.UseShellExecute = $false; $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.CreateNoWindow = $true
@@ -69,9 +118,10 @@ try {
     $mcp.StandardInput.WriteLine('{"jsonrpc":"2.0","method":"notifications/initialized"}')
     $r = Rpc '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
     $names = @($r.result.tools | ForEach-Object { $_.name })
-    Assert ($r.id -eq 2 -and ($names -join ',') -eq 'add_task,list_tasks,complete_task,remove_task,add_water,water_status') "MCP tools/list ($($names -join ', '))"
+    Assert ($r.id -eq 2 -and ($names -join ',') -eq 'add_task,list_tasks,complete_task,remove_task,add_water,calendar_events,water_status') "MCP tools/list ($($names -join ', '))"
+    $n0 = (Todo).Tasks
     $r = Rpc '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"add_task","arguments":{"title":"Stretch","start":"16:00"}}}'
-    Assert (-not $r.result.isError -and $r.result.content[0].text -eq 'Added task 2: Stretch (16:00)' -and (Todo).Tasks -eq 2) "MCP add_task, and Perch shows it ($($r.result.content[0].text))"
+    Assert (-not $r.result.isError -and $r.result.content[0].text -eq "Added task $($n0 + 1): Stretch (16:00)" -and (Todo).Tasks -eq $n0 + 1) "MCP add_task, and Perch shows it ($($r.result.content[0].text))"
     $r = Rpc '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"add_water","arguments":{"ml":500}}}'
     Assert ($r.result.structuredContent.ml -eq 1500 -and (Water) -eq 1500) 'MCP add_water'
     $r = Rpc '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"complete_task","arguments":{"number":7}}}'

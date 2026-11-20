@@ -52,6 +52,11 @@ fn tools() -> Value {
             "inputSchema": { "type": "object", "properties": { "ml": { "type": "integer", "description": "Millilitres; negative takes some back" } } }
         },
         {
+            "name": "calendar_events",
+            "description": "Events from the user's calendar (their own iCal link in Perch) for the next few days, starting today.",
+            "inputSchema": { "type": "object", "properties": { "days": { "type": "integer", "minimum": 1, "maximum": 31, "description": "How many days, from today (default 1)" } } }
+        },
+        {
             "name": "water_status",
             "description": "How much water the user has had today, and their daily goal.",
             "inputSchema": { "type": "object", "properties": {} }
@@ -69,6 +74,7 @@ fn call(name: &str, args: &Value) -> Result<actions::Outcome, String> {
         "remove_task" => actions::remove_task(n("number").unwrap_or(0).max(0) as usize),
         "add_water" => actions::add_water(n("ml").map(|v| v as i32)),
         "water_status" => actions::water_status(),
+        "calendar_events" => actions::calendar(0, n("days").unwrap_or(1).clamp(1, 31) as i32),
         _ => return Err(format!("unknown tool {name}")),
     };
     r.map_err(|e| e.to_string())
@@ -110,10 +116,11 @@ pub fn serve() {
     let mut out = std::io::stdout().lock();
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
+        let line = line.trim_start_matches('\u{FEFF}'); // some Windows programs start their output with a byte-order mark
         if line.trim().is_empty() {
             continue;
         }
-        let reply = match serde_json::from_str::<Value>(&line) {
+        let reply = match serde_json::from_str::<Value>(line) {
             Ok(msg) => handle(&msg),
             Err(e) => Some(json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32700, "message": format!("parse error: {e}") } })),
         };

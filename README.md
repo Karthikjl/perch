@@ -61,7 +61,7 @@ Requires Windows 10 (2004 or later) or Windows 11, x64. Perch updates itself fro
 
 ## Command line and AI tools (MCP)
 
-`perchctl` manages Perch's to-do list and water from a terminal, a script, or an AI assistant. It works on
+`perchctl` manages Perch's to-do list and water, reads your calendar and asks Perch questions, from a terminal, a script, or an AI assistant. It works on
 the same files as the notch, and a running Perch shows each change straight away. It's written in Rust and
 builds on Windows, macOS and Linux (the notch itself is Windows-only for now).
 
@@ -74,12 +74,15 @@ perchctl task remove 2
 perchctl water add            # one cup
 perchctl water add 500
 perchctl water status
+perchctl calendar week        # today (default), tomorrow or week, from your calendar link
+perchctl ask "What's 15% of 80?"   # Ask Perch, with the key and model saved in Perch
+perchctl update               # is there a newer Perch on GitHub?
 ```
 
 Add `--json` to any command for output a script can read.
 
 **Use it from Claude or another AI tool.** `perchctl mcp` is an MCP server (Model Context Protocol) with the
-tools `add_task`, `list_tasks`, `complete_task`, `remove_task`, `add_water` and `water_status`.
+tools `add_task`, `list_tasks`, `complete_task`, `remove_task`, `add_water`, `water_status` and `calendar_events`.
 
 - **Claude Desktop:** add to `claude_desktop_config.json`:
   ```json
@@ -141,7 +144,7 @@ it matters, and skip rather than click into another app.
 
 | Path | What it is |
 |---|---|
-| `rust/` | The Rust core (`core`: to-do, water, settings, shared by every platform) and `perchctl` (`cli`: command line and MCP server) |
+| `rust/` | The Rust core (`core`: to-do, water, settings, calendar, lyrics, Ask Perch, updates, reminder timing, shared by every platform) and `perchctl` (`cli`: command line and MCP server) |
 | `src/notch.cpp` | The app: window, drawing, animation, pages, pop-ups, shelf, tray icon |
 | `src/mascot.cpp` | The mascot's looks, shared by the notch and the settings previews |
 | `src/media.cpp` | Now playing and media controls (Windows media session API) |

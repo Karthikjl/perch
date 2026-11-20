@@ -118,3 +118,78 @@ pub fn water_status() -> Result<Outcome> {
     let (text, json) = water_status_of(day.ml);
     Ok(Outcome { text: format!("Water: {text}"), json })
 }
+
+// ---- calendar ----
+
+/// Events from the user's calendar link (downloaded now, or the copy the app kept when offline): `days` days,
+/// starting `skip` days from today.
+pub fn calendar(skip: i32, days: i32) -> Result<Outcome> {
+    use perch_core::calendar;
+    let s = Settings::load(&paths::settings_file());
+    if s.cal_link.is_empty() {
+        return Err(Error("no calendar link yet: right-click the notch > Paste calendar link, or set [Calendar] Link in settings.ini".into()));
+    }
+    let cache = paths::data_dir().join("calendar.ics");
+    let (ics, offline) = match calendar::download(&s.cal_link) {
+        Ok(t) => {
+            let _ = std::fs::write(&cache, &t);
+            (t, false)
+        }
+        Err(()) => (std::fs::read_to_string(&cache).map_err(|_| Error("couldn't reach your calendar, and there's no saved copy".into()))?, true),
+    };
+    let today = calendar::today();
+    let first = today + skip;
+    let events = calendar::parse(&ics, first, first + days - 1).ok_or_else(|| Error("that link isn't an iCal calendar".into()))?;
+    let mut text = String::new();
+    if offline {
+        text.push_str("(Couldn't reach your calendar: this is the last copy.)\n");
+    }
+    let mut items = Vec::new();
+    for d in first..first + days {
+        let (y, m, dd) = calendar::date(d);
+        let on: Vec<_> = events.iter().filter(|e| e.day == d).collect();
+        let name = match d - today { 0 => "Today".to_string(), 1 => "Tomorrow".to_string(), _ => format!("{y}-{m:02}-{dd:02}") };
+        text.push_str(&format!("{name}:{}\n", if on.is_empty() { " nothing" } else { "" }));
+        for e in on {
+            let time = if e.start < 0 { "all day".to_string() } else if e.end >= 0 { format!("{}-{}", clock::format_time(e.start), clock::format_time(e.end)) } else { clock::format_time(e.start) };
+            text.push_str(&format!("  {time}  {}\n", e.title));
+            items.push(json!({ "date": format!("{y}-{m:02}-{dd:02}"), "start": (e.start >= 0).then(|| clock::format_time(e.start)), "end": (e.end >= 0 && e.start >= 0).then(|| clock::format_time(e.end)), "all_day": e.start < 0, "title": e.title }));
+        }
+    }
+    Ok(Outcome { text: text.trim_end().to_string(), json: json!({ "events": items, "offline_copy": offline }) })
+}
+
+// ---- Ask Perch ----
+
+/// One question to Gemini with the saved key and model. A task the model asks for is added for real.
+pub fn ask(question: &str) -> Result<Outcome> {
+    use perch_core::ask;
+    if question.trim().is_empty() {
+        return Err(Error("ask a question: perchctl ask \"What's 15% of 80?\"".into()));
+    }
+    let key = perch_core::secrets::gemini_key().ok_or_else(|| Error("no Gemini key: add one in Perch (Settings > Ask Perch > Paste key), or set PERCH_GEMINI_KEY".into()))?;
+    let model = Settings::load(&paths::settings_file()).ask_model;
+    let a = ask::generate(&key, &model, &[ask::Turn { user: true, text: question.to_string() }], clock::now_minute()).map_err(Error)?;
+    let mut text = a.text.clone();
+    let mut added = Value::Null;
+    if let Some(t) = &a.task {
+        let s = |m: Option<i32>| m.map(clock::format_time);
+        let o = add_task(&t.title, s(t.start).as_deref(), s(t.end).as_deref(), t.daily)?;
+        if !text.is_empty() {
+            text.push_str("\n\n");
+        }
+        text.push_str(&o.text);
+        added = o.json;
+    }
+    Ok(Outcome { text, json: json!({ "answer": a.text, "model": model, "task": added }) })
+}
+
+// ---- updates ----
+
+pub fn update_check() -> Result<Outcome> {
+    use perch_core::update;
+    let r = update::check(if cfg!(windows) { "Perch.exe" } else { "perch" }).map_err(|s| Error(if s == 0 { "couldn't reach GitHub".into() } else { format!("GitHub answered {s}") }))?;
+    let newer = update::newer(&r.version, update::VERSION);
+    let text = if newer { format!("Perch {} is available (you have {}). Install it from the notch: right-click > Install update.", r.version, update::VERSION) } else { format!("Perch is up to date ({}).", update::VERSION) };
+    Ok(Outcome { text, json: json!({ "current": update::VERSION, "latest": r.version, "newer": newer, "download": r.url }) })
+}

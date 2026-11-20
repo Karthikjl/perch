@@ -23,8 +23,24 @@ enum Command {
     /// Water drunk today
     #[command(subcommand)]
     Water(WaterCommand),
+    /// Events from your calendar link: today (default), tomorrow or the week
+    Calendar {
+        #[arg(value_enum, default_value_t = Span::Today)]
+        when: Span,
+    },
+    /// Ask Perch (Gemini, with the key saved in Perch): perchctl ask "What's 15% of 80?"
+    Ask { question: Vec<String> },
+    /// Check GitHub for a newer Perch
+    Update,
     /// Run as an MCP server on stdin / stdout (for Claude, Cursor and other AI tools)
     Mcp,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum Span {
+    Today,
+    Tomorrow,
+    Week,
 }
 
 #[derive(Subcommand)]
@@ -78,6 +94,13 @@ fn main() {
         Command::Task(TaskCommand::Remove { number }) => actions::remove_task(number),
         Command::Water(WaterCommand::Add { ml }) => actions::add_water(ml),
         Command::Water(WaterCommand::Status) => actions::water_status(),
+        Command::Calendar { when } => match when {
+            Span::Today => actions::calendar(0, 1),
+            Span::Tomorrow => actions::calendar(1, 1),
+            Span::Week => actions::calendar(0, 7),
+        },
+        Command::Ask { question } => actions::ask(&question.join(" ")),
+        Command::Update => actions::update_check(),
     };
     match result {
         Ok(o) => {

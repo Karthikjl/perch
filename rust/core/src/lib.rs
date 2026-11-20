@@ -1,12 +1,19 @@
 //! Perch's core: the data and logic every platform shares, in the same files the Windows app uses
-//! (`settings.ini`, `tasks.txt`, `water.txt` in Perch's data folder), so the command line, the MCP server and
-//! the notch all see the same tasks and water.
+//! (`settings.ini`, `tasks.txt`, `water.txt`, `calendar.ics`, `ask.key` in Perch's data folder), so the command
+//! line, the MCP server and the notch all see the same things.
 
 pub mod app;
+pub mod ask;
+pub mod calendar;
 pub mod clock;
+pub mod lyrics;
+pub mod net;
 pub mod paths;
+pub mod reminders;
+pub mod secrets;
 pub mod settings;
 pub mod tasks;
+pub mod update;
 pub mod water;
 
 pub use tasks::{Task, TaskList};
